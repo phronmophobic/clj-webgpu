@@ -223,7 +223,8 @@
                                                (doto (PointerByReference.)
                                                  (.setValue command-buffer))))]
     
-    (vswap! refs identity)))
+    (vswap! refs identity)
+    nil))
 
 (defn copy-from-buffer [ctx buffer]
   (raw/wgpuBufferMapAsync (:buffer buffer) raw/WGPUMapMode_Read 0 (:size buffer)
