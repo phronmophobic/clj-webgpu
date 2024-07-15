@@ -97,13 +97,13 @@
      :queue (raw/wgpuDeviceGetQueue @device*)})
   )
 
-(defn create-buffer [ctx {:keys [label usage length type] :as m}]
+(defn create-buffer [ctx {:keys [label usage length type mapped-at-creation?] :as m}]
   (let [size (* length (get buffer-type-sizes type))
         descriptor (doto (WGPUBufferDescriptorByReference.)
-                     (.writeField "size" size)
-                     (.writeField "mappedAtCreation" (int 0)))
+                     (.writeField "size" size))
         
         descriptor (cond-> descriptor
+                     mapped-at-creation? (write-field "mappedAtCreation" (int 1))
                      usage (write-field "usage"
                                         (int (reduce
                                               (fn [flags kw]
