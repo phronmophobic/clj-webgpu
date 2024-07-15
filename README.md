@@ -16,6 +16,11 @@ com.phronemophobic.cljonda/webgpu-native-darwin-x86-64 {:mvn/version "v0.19.4.1"
 
 See [examples](https://github.com/phronmophobic/clj-webgpu/tree/master/examples).
 
+## Inspiration
+
+- WebGPU is Not Just about the Web: https://youtu.be/qHrx41aOTUQ?si=_lazchByglMI7qG1
+- https://github.com/AnswerDotAI/gpu.cpp
+
 ## License
 
 Copyright © 2024 Adrian
