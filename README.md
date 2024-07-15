@@ -22,11 +22,11 @@ See [examples](https://github.com/phronmophobic/clj-webgpu/tree/master/examples)
 
 ## Native Dependencies
 
-In theory, these examples could run against any webgpu implemtation, but this example has only been tested with [webgpu-native](https://github.com/gfx-rs/wgpu-native), the implementation by Mozilla. The maven native binaries are just reuploads of the [releases](https://github.com/gfx-rs/wgpu-native/releases) provided by the wgpu-native github project. You can build or download the native dependencies yourself as long as the shared library is somewhere that JNA can find it. For example, in a folder specified with `:jvm-opts ["-Djna.library.path=/path/to/folder//"]`.
+In theory, these examples could run against any webgpu implemtation, but this example has only been tested with [webgpu-native](https://github.com/gfx-rs/wgpu-native), the implementation by Mozilla. The maven native binaries are just reuploads of the [releases](https://github.com/gfx-rs/wgpu-native/releases) provided by the wgpu-native github project. You can build or download the native dependencies yourself as long as the shared library is somewhere that JNA can find it. For example, in a folder specified with `:jvm-opts ["-Djna.library.path=/path/to/folder/"]`.
 
 ## Inspiration
 
-- WebGPU is Not Just about the Web: https://youtu.be/qHrx41aOTUQ?si=_lazchByglMI7qG1
+- WebGPU is Not Just about the Web: https://youtu.be/qHrx41aOTUQ
 - https://github.com/AnswerDotAI/gpu.cpp
 
 ## License
