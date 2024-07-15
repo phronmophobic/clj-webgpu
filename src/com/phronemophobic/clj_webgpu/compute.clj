@@ -67,15 +67,17 @@
 
 (defn ^:private  ->memory [o]
   (ref!
-   (case (.getCanonicalName (type o))
-     "java.lang.String" (let [buf (.getBytes o "utf-8")
+   (case (.getCanonicalName ^Class (type o))
+     "java.lang.String" (let [^String o o
+                              buf (.getBytes o "utf-8")
                               len (alength buf)]
                           (doto (Memory. (inc len))
                             (.write 0 buf 0 len)
                             (.setByte len 0)))
 
-     "byte[]" (doto (Memory. (alength o))
-                (.write 0 o 0 (alength o))))))
+     "byte[]" (let [^bytes o o]
+                (doto (Memory. (alength o))
+                  (.write 0 o 0 (alength o)))))))
 
 (defn create-context []
   (let [instance (raw/wgpuCreateInstance nil)
@@ -118,6 +120,7 @@
   (let [chain (doto (WGPUChainedStruct.)
                 (.writeField "sType" raw/WGPUSType_ShaderModuleWGSLDescriptor))
 
+        ^WGPUShaderModuleWGSLDescriptorByReference
         next-in-chain (ref!
                        (doto (WGPUShaderModuleWGSLDescriptorByReference.)
                          (.writeField "chain" chain)
@@ -138,9 +141,14 @@
     shader))
 
 (defn copy-to-buffer [ctx buffer data]
-  (let [mem (doto (Memory. (:size buffer))
-              (.write 0 data 0 (alength data)))]
-   (raw/wgpuQueueWriteBuffer (:queue ctx) (:buffer buffer) 0 mem (:size buffer))))
+  (let [mem (Memory. (:size buffer))]
+    (case (:type buffer)
+      :i32 (let [^ints data data] (.write mem 0 data 0 (alength data)))
+      :u32 (let [^ints data data] (.write mem 0 data 0 (alength data)))
+      :f32 (let [^floats data data] (.write mem 0 data 0 (alength data)))
+      ;; :f16
+      )
+    (raw/wgpuQueueWriteBuffer (:queue ctx) (:buffer buffer) 0 mem (.size mem))))
 
 (defn dispatch [ctx {:keys [entry-point
                             shader
@@ -175,14 +183,17 @@
 
         bind-group-layout (raw/wgpuComputePipelineGetBindGroupLayout compute-pipeline group)
 
+        ^objects
         entries-arr (ref!
                      (.toArray (WGPUBindGroupEntryByReference.) (count bindings)))
         _ (doseq [[i buffer] (map-indexed vector bindings)]
-            (doto (aget entries-arr i)
-              (.writeField "binding" (int i))
-              (.writeField "buffer" (:buffer buffer))
-              (.writeField "offset" 0)
-              (.writeField "size" (:size buffer))))
+            (let [^WGPUBindGroupEntryByReference
+                  entry (aget entries-arr i)]
+              (doto entry
+                (.writeField "binding" (int i))
+                (.writeField "buffer" (:buffer buffer))
+                (.writeField "offset" 0)
+                (.writeField "size" (:size buffer)))))
 
         bind-group (raw/wgpuDeviceCreateBindGroup
                     device
@@ -232,7 +243,7 @@
                             nil)
                         nil)
   (raw/wgpuDevicePoll (:device ctx) 1 nil)
-  (let [ret (raw/wgpuBufferGetMappedRange (:buffer buffer) 0 (:size buffer))]
+  (let [^Pointer ret (raw/wgpuBufferGetMappedRange (:buffer buffer) 0 (:size buffer))]
     (case (:type buffer)
       :i32 (.getIntArray ret 0 (:length buffer))
       :u32 (.getIntArray ret 0 (:length buffer))
