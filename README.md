@@ -4,7 +4,15 @@ WIP bindings for webgpu.
 
 ## Rationale
 
-GPUs are much faster for some workloads. I want to be able to write programs that run on my mac as well as with nvidia gpus on linux. Even running the most basic compute shader with Vulkan is [really gnarly](https://github.com/mcleary/VulkanHpp-Compute-Sample/blob/master/main.cpp). However, webgpu is a new cross platform option that is gaining traction and support.
+GPUs are much faster for some workloads. I want to be able to write programs that run on my mac as well as with nvidia gpus on linux. Even running the most basic compute shader with Vulkan is [really gnarly](https://github.com/mcleary/VulkanHpp-Compute-Sample/blob/master/main.cpp). 
+
+Webgpu is a new cross platform option that is gaining traction and support. Some of the benefits of webgpu vs similar options are:
+
+- cross platform
+- multiple implementations (dawn, webgpu-native)
+- some compatibility with the web
+- growing ecosystem of tools, technique, documentation, and shaders
+- flexible, high level API
 
 ## Deps
 
