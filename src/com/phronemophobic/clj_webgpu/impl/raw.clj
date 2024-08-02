@@ -90,12 +90,16 @@
 
 (defn fixes [api]
   (-> api
-      (set-field-type :clong/WGPUShaderModuleDescriptor "nextInChain" Pointer)
+      (set-field-type :clong/WGPUShaderModuleDescriptor "nextInChain" :coffi.mem/pointer)
       fix-char-pointers))
 
 (def api (-> raw-api
-             fixes))
+             fixes
+             gen/replace-forward-references))
 
 (gen/def-api libwebgpu api)
+
+
+(gen/def-struct-constructors (:structs api))
 
 

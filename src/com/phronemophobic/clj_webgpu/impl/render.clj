@@ -12,44 +12,9 @@
    com.sun.jna.ptr.LongByReference
    com.sun.jna.ptr.IntByReference
    com.sun.jna.ptr.ByteByReference
-   com.sun.jna.Structure
-
-
-   (com.phronemophobic.clj_webgpu.impl.raw.structs
-    WGPUShaderModuleDescriptorByReference
-    WGPUShaderModuleWGSLDescriptorByReference
-    WGPUBufferDescriptorByReference
-    WGPUComputePipelineDescriptorByReference
-    WGPUChainedStruct
-    WGPUProgrammableStageDescriptor
-    WGPUBindGroupDescriptorByReference
-    WGPUBindGroupEntryByReference
-    WGPUCommandEncoderDescriptorByReference
-    WGPUComputePassDescriptorByReference
-    WGPUCommandBufferDescriptorByReference
-    WGPUTextureDescriptorByReference
-    WGPUTextureViewDescriptorByReference
-    WGPURenderPipelineDescriptorByReference
-    WGPUFragmentStateByReference
-    WGPUBlendStateByReference
-    WGPUBlendComponent
-    WGPUColorTargetStateByReference
-    WGPUMultisampleState
-    WGPUDeviceDescriptorByReference
-    WGPUExtent3D
-    WGPUExtent3DByReference
-    WGPUVertexState
-    WGPUPrimitiveState
-    WGPURenderPassDescriptorByReference
-    WGPURenderPassColorAttachmentByReference
-    WGPUColor
-    WGPUImageCopyTextureByReference
-    WGPUImageCopyBufferByReference
-    WGPUTextureDataLayout
-))
+   com.sun.jna.Structure)
   (:gen-class)
   )
-;; com.phronemophobic.clj_webgpu.impl.raw.structs.WGPU
 
 
 (defonce refs (atom #{}))
@@ -106,28 +71,7 @@
 ;; 	Device device = adapter.requestDevice(deviceDesc);
 ;; 	std::cout << "Got device: " << device << std::endl;
 
-(def requiredFeatures
-  (int-array 0 #_[raw/WGPUFeatureName_TextureCompressionBC
-              raw/WGPUFeatureName_BGRA8UnormStorage])
-  
-  #_(IntByReference. raw/WGPUFeatureName_TextureCompressionBC))
-
-
-
-;; WGPUFeatureName_BGRA8UnormStorage
-
-;; (raw)
-
-;; raw/WGPUNativeFeature_TextureAdapterSpecificFormatFeatures
-;; TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-(def deviceDesc
-  (doto (WGPUDeviceDescriptorByReference.)
-    (.writeField "label" (->memory "My Device"))
-    #_(.writeField "requiredFeatureCount" (long (alength requiredFeatures)))
-    #_(.writeField "requiredFeatures" (->memory requiredFeatures))))
-
-
-(raw/wgpuAdapterRequestDevice adapter deviceDesc
+(raw/wgpuAdapterRequestDevice adapter nil
                               (fn [status device* message user-data]
                                 (prn (.getString (.getPointer message) 0 "utf-8"))
                                 (def device device*))
@@ -160,20 +104,18 @@
 (def swapChainFormat raw/WGPUTextureFormat_RGBA8UnormSrgb)
 
 (def targetTextureDesc
-  (doto (WGPUTextureDescriptorByReference.)
-    (.writeField "label" (->memory "Render texture"))
-    (.writeField "dimension" raw/WGPUTextureDimension_2D)
-    (.writeField "size" (doto (WGPUExtent3D.)
-                          (.writeField "width" (int 640))
-                          (.writeField "height" (int 480))
-                          (.writeField "depthOrArrayLayers" (int 1))))
-    (.writeField "format" swapChainFormat)
-    (.writeField "mipLevelCount" (int 1))
-    (.writeField "sampleCount" (int 1))
-    (.writeField "usage" (int
-                          (bit-or raw/WGPUTextureUsage_RenderAttachment raw/WGPUTextureUsage_CopySrc)))
-    
-    ,))
+  (raw/map->WGPUTextureDescriptorByReference
+   {:label (->memory "Render texture")
+    :dimension raw/WGPUTextureDimension_2D
+    :size (raw/map->WGPUExtent3D
+           {:width 640
+            :height 480
+            :depthOrArrayLayers 1})
+    :format swapChainFormat
+    :mipLevelCount 1
+    :sampleCount 1
+    :usage (bit-or raw/WGPUTextureUsage_RenderAttachment raw/WGPUTextureUsage_CopySrc)}))
+
 (def targetTexture (raw/wgpuDeviceCreateTexture device targetTextureDesc ))
 
 
@@ -196,15 +138,15 @@
 ;; 	Texture targetTexture = device.createTexture(targetTextureDesc);
 
 (def targetTextureViewDesc
-  (doto (WGPUTextureViewDescriptorByReference.)
-    (.writeField "label" (->memory "Render texture view"))
-    (.writeField "baseArrayLayer" (int 0))
-    (.writeField "arrayLayerCount" (int 1))
-    (.writeField "baseMipLevel" (int 0))
-    (.writeField "mipLevelCount" (int 1))
-    (.writeField "aspect" raw/WGPUTextureAspect_All)
-
-    ,))
+  (raw/map->WGPUTextureViewDescriptorByReference
+   {:label (->memory "Render texture view")
+    :baseArrayLayer 0
+    :arrayLayerCount 1
+    :baseMipLevel 0
+    :mipLevelCount 1
+    :aspect raw/WGPUTextureAspect_All})
+  
+  ,)
 
 
 (def targetTextureView (raw/wgpuTextureCreateView targetTexture targetTextureViewDesc))
@@ -265,18 +207,14 @@ fn fs_main() -> @location(0) vec4f {
 ;; )";
 
 (defn load-shader-module [device label code]
-  (let [
-        descriptor
-        (doto (WGPUShaderModuleDescriptorByReference.)
-          (.writeField "label" (->memory label))
-          (.writeField "nextInChain"
-                       (.getPointer
-                        (doto (WGPUShaderModuleWGSLDescriptorByReference.)
-                          (.writeField "chain"
-                                       (doto (WGPUChainedStruct.)
-                                         (.writeField "sType" raw/WGPUSType_ShaderModuleWGSLDescriptor)))
-                          (.writeField "code" (->memory code))))))
-        ]
+  (let [descriptor
+        (raw/map->WGPUShaderModuleDescriptorByReference
+         {:label (->memory label)
+          :nextInChain
+          (raw/map->WGPUShaderModuleWGSLDescriptorByReference
+           {:chain (raw/map->WGPUChainedStruct
+                    {:sType raw/WGPUSType_ShaderModuleWGSLDescriptor})
+            :code (->memory code)})})]
     
     (raw/wgpuDeviceCreateShaderModule device
                                       descriptor))
@@ -308,62 +246,56 @@ fn fs_main() -> @location(0) vec4f {
 ;; 	RenderPipelineDescriptor pipelineDesc;
 
 (def pipelineDesc
-  (doto (WGPURenderPipelineDescriptorByReference.)
-    (.writeField "vertex"
-                 (doto (WGPUVertexState.)
-                   (.writeField "module" shaderModule)
-                   (.writeField "entryPoint" (->memory "vs_main"))))
-    (.writeField "primitive"
-                 (doto (WGPUPrimitiveState.)
-                   (.writeField "topology" raw/WGPUPrimitiveTopology_TriangleList)
-                   ;; (.writeField "stripIndexFormat" raw/WGPUIndexFormat_Undefined)
-                   ;; (.writeField "frontFace" raw/WGPUFrontFace_CCW)
-                   ;; (.writeField "cullMode" raw/WGPUCullMode_None)
+  (raw/map->WGPURenderPipelineDescriptorByReference
+   {:vertex (raw/map->WGPUVertexState
+             {:module shaderModule
+              :entryPoint (->memory "vs_main")})
+    :primitive
+    (raw/map->WGPUPrimitiveState
+     {:topology raw/WGPUPrimitiveTopology_TriangleList})
+    ;; (.writeField "stripIndexFormat" raw/WGPUIndexFormat_Undefined)
+    ;; (.writeField "frontFace" raw/WGPUFrontFace_CCW)
+    ;; (.writeField "cullMode" raw/WGPUCullMode_None)
 
-                   
-                   ,))
-    (.writeField "fragment"
-                 (ref!
-                  (doto (WGPUFragmentStateByReference.)
-                    (.writeField "module" shaderModule)
-                    (.writeField "entryPoint" (->memory "fs_main"))
-                    (.writeField "targetCount" 1)
-                    (.writeField "targets" (ref!
-                                            (doto (WGPUColorTargetStateByReference.)
-                                              (.writeField "format" swapChainFormat)
-                                              (.writeField "blend"
-                                                           (doto (WGPUBlendStateByReference.)
-                                                             (.writeField "color"
-                                                                          (doto (WGPUBlendComponent.)
-                                                                            (.writeField "srcFactor" raw/WGPUBlendFactor_SrcAlpha)
-                                                                            (.writeField "dstFactor" raw/WGPUBlendFactor_OneMinusSrcAlpha)
-                                                                            (.writeField "operation" raw/WGPUBlendOperation_Add)))
-                                                             (.writeField "alpha"
-                                                                          (doto (WGPUBlendComponent.)
-                                                                            (.writeField "srcFactor" raw/WGPUBlendFactor_Zero)
-                                                                            (.writeField "dstFactor" raw/WGPUBlendFactor_One)
-                                                                            (.writeField "operation" raw/WGPUBlendOperation_Add)))
-                                                           
+    
+    ,
+    :fragment
+    (ref!
+     (raw/map->WGPUFragmentStateByReference
+      {:module shaderModule
+       :entryPoint (->memory "fs_main")
+       :targetCount 1
+       :targets (ref!
+                 (raw/map->WGPUColorTargetStateByReference
+                  {:format swapChainFormat
+                   :blend
+                   (raw/map->WGPUBlendStateByReference
+                    {:color
+                     (raw/map->WGPUBlendComponent
+                      {:srcFactor raw/WGPUBlendFactor_SrcAlpha
+                       :dstFactor raw/WGPUBlendFactor_OneMinusSrcAlpha
+                       :operation raw/WGPUBlendOperation_Add})
+                     :alpha
+                     (raw/map->WGPUBlendComponent
+                      {:srcFactor raw/WGPUBlendFactor_Zero
+                       :dstFactor raw/WGPUBlendFactor_One
+                       :operation raw/WGPUBlendOperation_Add})})
+                   ,
+                   :writeMask raw/WGPUColorWriteMask_All})
+                 
+                 ,)}))
 
-                                                             ,))
-                                              (.writeField "writeMask" raw/WGPUColorWriteMask_All)
-                                            
-                                              ,))))))
-
-    (.writeField "multisample"
-                 (doto (WGPUMultisampleState.)
-                   (.writeField "count" (int 1))
-                   (.writeField "mask" (int -1))
-                   (.writeField "alphaToCoverageEnabled" (int 0))
-
-                   ,))
+    :multisample
+    (raw/map->WGPUMultisampleState
+     {:count (int 1)
+      :mask (int -1)
+      :alphaToCoverageEnabled (int 0)})
+    
+    ,})
 
 
 
-    ,))
-
-
-
+  ,)
 
 ;; 	// Vertex fetch
 ;; 	// (We don't use any input buffer so far)
@@ -471,34 +403,33 @@ fn fs_main() -> @location(0) vec4f {
 
 
 (def command-encoder (raw/wgpuDeviceCreateCommandEncoder
-                     device
-                     (doto (WGPUCommandEncoderDescriptorByReference.)
-                       (.writeField "label" (->memory "command_encoder")))
-                     ))
+                      device
+                      (raw/map->WGPUCommandEncoderDescriptorByReference
+                       {:label (->memory "command_encoder")})
+                      ))
 
 
 (def renderPass
   (raw/wgpuCommandEncoderBeginRenderPass
    command-encoder
-   (doto (WGPURenderPassDescriptorByReference.)
-     (.writeField "colorAttachments"
-                  (doto (WGPURenderPassColorAttachmentByReference.)
-                    (.writeField "view" nextTexture)
-                    (.writeField "resolveTarget" nil)
-                    (.writeField "loadOp" raw/WGPULoadOp_Clear)
-                    (.writeField "storeOp" raw/WGPUStoreOp_Store)
-                    (.writeField "clearValue"
-                                 (doto (WGPUColor.)
-                                   (.writeField "r" 0.9)
-                                   (.writeField "g" 0.1)
-                                   (.writeField "b" 0.2)
-                                   (.writeField "a" 1.0)))))
-     (.writeField "colorAttachmentCount" 1)
-     (.writeField "depthStencilAttachment" nil)
-     ;; (.writeField "timestampWriteCount" 0)
-     ;; (.writeField "timestampWrites" nil)
-     
-     ,)))
+   (raw/map->WGPURenderPassDescriptorByReference
+    {:colorAttachments
+     (raw/map->WGPURenderPassColorAttachmentByReference
+      {:view nextTexture
+       :resolveTarget nil
+       :loadOp raw/WGPULoadOp_Clear
+       :storeOp raw/WGPUStoreOp_Store
+       :clearValue (raw/map->WGPUColor
+                    {:r 0.9
+                     :g 0.1
+                     :b 0.2
+                     :a 1.0})})
+     :colorAttachmentCount 1
+     :depthStencilAttachment nil})
+   ;; (.writeField "timestampWriteCount" 0)
+   ;; (.writeField "timestampWrites" nil)
+   
+   ,))
 
 (raw/wgpuRenderPassEncoderSetPipeline
  renderPass
@@ -513,10 +444,11 @@ fn fs_main() -> @location(0) vec4f {
 
 ;; (raw/wgpuTextureRelease nextTexture)
 
-(def command-buffer (raw/wgpuCommandEncoderFinish
-                     command-encoder
-                     (doto (WGPUCommandBufferDescriptorByReference.)
-                       (.writeField "label" (->memory "command_buffer")))))
+(def command-buffer
+  (raw/wgpuCommandEncoderFinish
+   command-encoder
+   (raw/map->WGPUCommandBufferDescriptorByReference
+    {:label (->memory "command_buffer")})))
 
 (raw/wgpuCommandEncoderRelease command-encoder)
 (raw/wgpuQueueSubmit queue 1 (doto (PointerByReference.)
@@ -604,24 +536,24 @@ fn fs_main() -> @location(0) vec4f {
 
         encoder (raw/wgpuDeviceCreateCommandEncoder
                  device
-                 (doto (WGPUCommandEncoderDescriptorByReference.)
-                   (.writeField "label" (->memory "command_encoder")))
+                 (raw/map->WGPUCommandEncoderDescriptorByReference
+                  {:label (->memory "command_encoder")})
                  )
         ;; 	// Start encoding the commands
         ;; 	CommandEncoder encoder = device.createCommandEncoder(Default);
 
-        source (doto (WGPUImageCopyTextureByReference.)
-                 (.writeField "texture" texture))
-
+        source (raw/map->WGPUImageCopyTextureByReference
+                {:texture texture})
+        
         pixelBuffer-size (* 4 width height)
         pixelBuffer (raw/wgpuDeviceCreateBuffer
                      device
-                     (doto (WGPUBufferDescriptorByReference.)
-                       (.writeField "usage" (int
-                                             (bit-or raw/WGPUBufferUsage_MapRead raw/WGPUBufferUsage_CopyDst)))
-                       (.writeField "size" pixelBuffer-size)
-                       (.writeField "mappedAtCreation" (int 0))))
-
+                     (raw/map->WGPUBufferDescriptorByReference
+                      {:usage (int
+                               (bit-or raw/WGPUBufferUsage_MapRead raw/WGPUBufferUsage_CopyDst))
+                       :size pixelBuffer-size
+                       :mappedAtCreation (int 0)}))
+        
 	;; BufferDescriptor pixelBufferDesc = Default;
 	;; pixelBufferDesc.mappedAtCreation = false;
 	;; pixelBufferDesc.usage = BufferUsage::MapRead | BufferUsage::CopyDst;
@@ -629,22 +561,21 @@ fn fs_main() -> @location(0) vec4f {
 	;; Buffer pixelBuffer = device.createBuffer(pixelBufferDesc);
         
 
-        destination (doto (WGPUImageCopyBufferByReference.)
-                      
-                      (.writeField "buffer" pixelBuffer)
-                      (.writeField "layout"
-                                   (doto (WGPUTextureDataLayout.)
-                                     (.writeField "bytesPerRow" (int (* 4 width)))
-                                     (.writeField "offset" 0)
-                                     (.writeField "rowsPerImage" height))))
+        destination (raw/map->WGPUImageCopyBufferByReference
+                     {:buffer pixelBuffer
+                      :layout
+                      (raw/map->WGPUTextureDataLayout
+                       {:bytesPerRow (int (* 4 width))
+                        :offset 0
+                        :rowsPerImage height})})
         _ (raw/wgpuCommandEncoderCopyTextureToBuffer
            encoder
            source
            destination
-           (doto (WGPUExtent3DByReference.)
-             (.writeField "width" (int width))
-             (.writeField "height" (int height))
-             (.writeField "depthOrArrayLayers" (int 1)))
+           (raw/map->WGPUExtent3DByReference
+            {:width (int width)
+             :height (int height)
+             :depthOrArrayLayers (int 1)})
            )
         ;; 	// Get pixels
         ;; 	ImageCopyTexture source = Default;
@@ -662,9 +593,9 @@ fn fs_main() -> @location(0) vec4f {
 
         command-buffer (raw/wgpuCommandEncoderFinish
                         encoder
-                        (doto (WGPUCommandBufferDescriptorByReference.)
-                          (.writeField "label" (->memory "command_buffer"))))
-
+                        (raw/map->WGPUCommandBufferDescriptorByReference
+                         {:label (->memory "command_buffer")}))
+        
         _ (raw/wgpuQueueSubmit queue 1 (doto (PointerByReference.)
                                          (.setValue command-buffer)))
 
