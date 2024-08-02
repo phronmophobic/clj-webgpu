@@ -107,8 +107,8 @@
 ;; 	std::cout << "Got device: " << device << std::endl;
 
 (def requiredFeatures
-  (int-array [raw/WGPUFeatureName_TextureCompressionBC
-               raw/WGPUFeatureName_BGRA8UnormStorage])
+  (int-array 0 #_[raw/WGPUFeatureName_TextureCompressionBC
+              raw/WGPUFeatureName_BGRA8UnormStorage])
   
   #_(IntByReference. raw/WGPUFeatureName_TextureCompressionBC))
 
@@ -123,8 +123,8 @@
 (def deviceDesc
   (doto (WGPUDeviceDescriptorByReference.)
     (.writeField "label" (->memory "My Device"))
-    (.writeField "requiredFeatureCount" (long (alength requiredFeatures)))
-    (.writeField "requiredFeatures" (->memory requiredFeatures))))
+    #_(.writeField "requiredFeatureCount" (long (alength requiredFeatures)))
+    #_(.writeField "requiredFeatures" (->memory requiredFeatures))))
 
 
 (raw/wgpuAdapterRequestDevice adapter deviceDesc
