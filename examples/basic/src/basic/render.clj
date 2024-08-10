@@ -117,75 +117,64 @@ var outi = global_id.x*4u;
    get-mesh
    mesh->verts))
 
-(defn draw [r]
-  (let [
+(def monster-verts
 
-        verts cube-verts
+  (-> (clj-manifold3d.core/import-mesh "/Users/adrian/Downloads/36ee14ff-06a6-47e1-9601-cbd3daf2e491.glb")
+      mesh->verts)
+  )
 
-        width 640
-        height 640
+(defn draw
+  ([ctx]
+   (gpu/save-png (draw ctx 0) "output.png"))
+  ([ctx r]
+   (let [
+         {:keys [texture sampler uni-buffer buf1 shader verts]} ctx
 
-        ctx (gpu/create-context)
+         width 640
+         height 640
 
-        rot (* 2 r Math/PI 2)
+         rot (* 2 r Math/PI 2)
 
-        camera-mat (mat/mmul
-                    (mtranslate 0 0 (+ -30 (* r 10)))
-                    (mrotate 0 Math/PI 0))
+         camera-mat (mat/mmul
+                     (mtranslate 0 0 (+ -30 (* r 10 0)))
+                     (mrotate 0 Math/PI 0))
 
-        transform (mat/transpose
-                   (mat/mmul
-                    ;; projection
-                    (perspective-fov (* 1/2 Math/PI) (/ width height) 0.1 500)
-                    ;; camera
-                    (mat/inverse camera-mat)
+         transform (mat/transpose
+                    (mat/mmul
+                     ;; projection
+                     (perspective-fov (* 1/2 Math/PI) (/ width height) 0.1 500)
+                     ;; camera
+                     (mat/inverse camera-mat)
 
-                    ;; model matrix
-                    (mrotate 0 rot (/ rot 4))
-                    (mscale 30 30 30)
-                    (mtranslate -0.5 -0.5 -0.5)
+                     ;; model matrix
+                     (mrotate 0 rot 0)
+                     (mrotate  (* -1/2 Math/PI) 0 0)
+                     (mscale 30 30 30)
+                     ;; (mtranslate -0.5 -0.5 -0.5)
 
-                    ))
-        uni-matrix
-        (float-array
-         (eduction
-          cat
-          transform))
+                     ))
+         uni-matrix
+         (float-array
+          (eduction
+           cat
+           transform))
 
-        texture (gpu/load-texture ctx (io/file
-                                       "/Users/adrian/workspace/clj-media/Clojure_logo.png"))
-        sampler (gpu/create-sampler ctx)
-        
-        uni-buffer (gpu/create-buffer ctx {:usage #{:Uniform
-                                                    :CopyDst}
-                                           :type :f32
-                                           :length (alength uni-matrix)})
-
-        buf1 (gpu/create-buffer ctx {:usage #{:Storage :CopyDst}
-                                     :type :f32
-                                     :length (alength verts)
-                                     })
-
-        shader (gpu/create-shader ctx {:src shader-src})
-
-
-        _ (gpu/copy-to-buffer ctx buf1 verts)
-        _ (gpu/copy-to-buffer ctx uni-buffer uni-matrix)
-        
-        result (gpu/render ctx
-                           {:vertex-entry-point "vs_main"
-                            :fragment-entry-point "fs_main"
-                            :shader shader
-                            :bindings [uni-buffer
-                                       buf1
-                                       texture
-                                       sampler]
-                            :instance-count 1
-                            :vertex-count (/ (alength verts) 3)
-                            :width width
-                            :height height})]
-    ;; (gpu/save-png result (str "output-" r ".png"))
-    result))
+         _ (gpu/copy-to-buffer ctx uni-buffer uni-matrix)
+         
+         result (gpu/render ctx
+                            {:vertex-entry-point "vs_main"
+                             :fragment-entry-point "fs_main"
+                             :shader shader
+                             :bindings [uni-buffer
+                                        buf1
+                                        texture
+                                        sampler]
+                             :instance-count 1
+                             :vertex-count (/ (alength verts) 3)
+                             :width width
+                             :height height})]
+     ;; (gpu/save-png result (str "output-" r ".png"))
+     result)))
 
 #_(defn add-gpu []
   (let [
@@ -254,7 +243,7 @@ var outi = global_id.x*4u;
 
 
 
-(defn -main [& args]
+(defn animate []
   (let [num-frames 100]
     (gif/save-gif!
      (gif/graphics->media
@@ -263,14 +252,61 @@ var outi = global_id.x*4u;
        :height 640}
       (eduction
        (map (fn [frameno]
+              (println frameno)
               (ui/image
                (draw (double (* 2 (/ frameno num-frames)))))))
        (range num-frames)))
      "webgpu.gif"))
+  )
+
+(defn make-ctx []
+  (let [verts monster-verts
+
+    ctx (gpu/create-context)
+    ctx (merge
+         ctx
+         {:texture (gpu/load-texture ctx (io/file
+                                          "/Users/adrian/workspace/clj-media/Clojure_logo.png"))
+          :sampler (gpu/create-sampler ctx)
+         
+          :uni-buffer (gpu/create-buffer ctx {:usage #{:Uniform
+                                                       :CopyDst}
+                                              :type :f32
+                                              :length 16})
+
+          :buf1 (gpu/create-buffer ctx {:usage #{:Storage :CopyDst}
+                                        :type :f32
+                                        :length (alength verts)})
+
+          :shader (gpu/create-shader ctx {:src shader-src})
+          :verts verts})
+
+        _ (gpu/copy-to-buffer ctx (:buf1 ctx) verts)]
+    ctx))
+
+(comment
+
+  (def ctx (make-ctx))
+  )
+
+(defn -main [& args]
+  ;; (animate)
+  (let [num-frames 100
+        ;; verts cube-verts
+        ctx (make-ctx)]
+    (dotimes [i 20]
+      (dorun
+       (eduction
+        (map (fn [frameno]
+               (println frameno)
+               (draw ctx (double (* 2 (/ frameno num-frames))))))
+        (range num-frames)))
+      (System/gc)))
   
   ;; (draw 0)
   #_(doseq [r (range 0 500 5)]
-    (draw (/ r 100.0)))
+      (draw (/ r 100.0)))
   ;; (add-gpu)
   )
+
 

@@ -101,12 +101,12 @@
         _ (raw/wgpuAdapterRequestDevice @adapter*
                                         nil
                                         #_(raw/map->WGPUDeviceDescriptor*
-                                         {:requiredLimits
-                                          (raw/map->WGPURequiredLimits*
-                                           {:limits 
-                                            (raw/map->WGPULimits
-                                             (assoc (into {} (:limits supported-limits))
-                                                    :maxTextureDimension2D 1000))})})
+                                           {:requiredLimits
+                                            (raw/map->WGPURequiredLimits*
+                                             {:limits 
+                                              (raw/map->WGPULimits
+                                               (assoc (into {} (:limits supported-limits))
+                                                      :maxTextureDimension2D 1000))})})
                                         (fn [status device message user-data]
                                           (deliver device* device))
                                         nil)]
@@ -668,11 +668,10 @@
              :depthCompare raw/WGPUCompareFunction_Less
              :format raw/WGPUTextureFormat_Depth24Plus
              :stencilBack (raw/map->WGPUStencilFaceState
-                            {:compare raw/WGPUCompareFunction_Always
-                             :failOp  raw/WGPUStencilOperation_Keep
-                             :depthFailOp raw/WGPUStencilOperation_Keep
-                             :passOp raw/WGPUStencilOperation_Keep
-                             })
+                           {:compare raw/WGPUCompareFunction_Always
+                            :failOp  raw/WGPUStencilOperation_Keep
+                            :depthFailOp raw/WGPUStencilOperation_Keep
+                            :passOp raw/WGPUStencilOperation_Keep})
              :stencilFront (raw/map->WGPUStencilFaceState
                             {:compare raw/WGPUCompareFunction_Always
                              :failOp  raw/WGPUStencilOperation_Keep
@@ -753,16 +752,16 @@
                        bind-group))
 
         targetTextureDesc (raw/map->WGPUTextureDescriptor*
-         {:label (->memory "Render texture")
-          :dimension raw/WGPUTextureDimension_2D
-          :size (raw/map->WGPUExtent3D
-                 {:width width
-                  :height height
-                  :depthOrArrayLayers 1})
-          :format texture-format
-          :mipLevelCount 1
-          :sampleCount 1
-          :usage (bit-or raw/WGPUTextureUsage_RenderAttachment raw/WGPUTextureUsage_CopySrc)})
+                           {:label (->memory "Render texture")
+                            :dimension raw/WGPUTextureDimension_2D
+                            :size (raw/map->WGPUExtent3D
+                                   {:width width
+                                    :height height
+                                    :depthOrArrayLayers 1})
+                            :format texture-format
+                            :mipLevelCount 1
+                            :sampleCount 1
+                            :usage (bit-or raw/WGPUTextureUsage_RenderAttachment raw/WGPUTextureUsage_CopySrc)})
 
         targetTexture (raw/wgpuDeviceCreateTexture device targetTextureDesc )
 
@@ -777,11 +776,11 @@
 
         targetTextureView (raw/wgpuTextureCreateView targetTexture targetTextureViewDesc)
 
-      ;; depthTexture = device.createTexture({
-      ;;   size: [canvasTexture.width, canvasTexture.height],
-      ;;   format: 'depth24plus',
-      ;;   usage: GPUTextureUsage.RENDER_ATTACHMENT,
-      ;; });
+        ;; depthTexture = device.createTexture({
+        ;;   size: [canvasTexture.width, canvasTexture.height],
+        ;;   format: 'depth24plus',
+        ;;   usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        ;; });
         depthTexture (raw/wgpuDeviceCreateTexture
                       device
                       (raw/map->WGPUTextureDescriptor*
@@ -858,7 +857,16 @@
         buf (save-texture ctx targetTexture width height)
         buf-img (->buffered-image buf width height)]
 
-    (vswap! refs identity)
+    (vreset! refs nil)
+
+    (raw/wgpuRenderPipelineRelease pipeline)
+    (raw/wgpuTextureViewRelease depth-texture-view)
+    (raw/wgpuTextureDestroy depthTexture)
+    (raw/wgpuTextureRelease depthTexture)
+    (raw/wgpuTextureViewRelease targetTextureView)
+    (raw/wgpuTextureDestroy targetTexture)
+    (raw/wgpuTextureRelease targetTexture)
+
     buf-img))
 
 (defn copy-from-buffer [ctx buffer]
