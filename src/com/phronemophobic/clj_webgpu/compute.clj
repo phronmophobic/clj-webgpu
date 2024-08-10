@@ -180,7 +180,6 @@
         textureDesc (raw/map->WGPUTextureDescriptor*
                      {:dimension raw/WGPUTextureDimension_2D
                       :size texture-size
-                      ;; :format raw/WGPUTextureFormat_RGBAU
                       :format raw/WGPUTextureFormat_RGBA8Unorm
                       :mipLevelCount 1
                       :sampleCount 1

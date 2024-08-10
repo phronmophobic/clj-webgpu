@@ -46,6 +46,7 @@ fn fs_main(fsInput: OurVertexShaderOutput) -> @location(0) vec4f {
  var oldb = color.b;
  var olda = color.a;
 
+ // convert from BufferedImage/TYPE_4BYTE_ABGR to raw/WGPUTextureFormat_RGBA8Unorm
  color.r = olda;
  color.b = oldg;
  color.g = oldb;
