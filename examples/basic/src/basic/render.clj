@@ -74,8 +74,8 @@ var outi = global_id.x*4u;
          nf (/ 1.0 (- near-plane far-plane))]
      [[(/ f aspect-ratio) 0 0 0]
       [0 f 0 0]
-      [0 0 (* (+ far-plane near-plane) nf) -1]
-      [0 0 (* 2 far-plane near-plane nf)  0]])))
+      [0 0 (* (+ far-plane near-plane) nf) (* 2 far-plane near-plane nf)]
+      [0 0 -1 0]])))
 
 (defn mtranslate [tx ty tz]
   [[1 0 0 tx]
@@ -128,11 +128,19 @@ var outi = global_id.x*4u;
         ctx (gpu/create-context)
 
         rot (* 2 r Math/PI 2)
+
+        camera-mat (mat/mmul
+                    (mtranslate 0 0 (+ -30 (* r 10)))
+                    (mrotate 0 Math/PI 0))
+
         transform (mat/transpose
                    (mat/mmul
-                    (mat/transpose (perspective-fov (* 1/2 Math/PI) (/ width height) 0.1 500))
-                    (mtranslate 0 0 -30 ;;(+ -0.1 (* -500 r) )
-                                )
+                    ;; projection
+                    (perspective-fov (* 1/2 Math/PI) (/ width height) 0.1 500)
+                    ;; camera
+                    (mat/inverse camera-mat)
+
+                    ;; model matrix
                     (mrotate 0 rot (/ rot 4))
                     (mscale 30 30 30)
                     (mtranslate -0.5 -0.5 -0.5)
