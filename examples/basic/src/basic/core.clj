@@ -34,9 +34,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
   (gpu/copy-to-buffer ctx buf nums)
 
-  (gpu/dispatch ctx {:shader shader
-                     :workgroups {:x (alength nums)}
-                     :bindings [buf]})
+  (gpu/compute ctx {:shader shader
+                    :workgroups {:x (alength nums)}
+                    :bindings [buf]})
 
   (gpu/copy ctx buf staging-buf)
   (def result (gpu/copy-from-buffer ctx staging-buf))

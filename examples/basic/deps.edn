@@ -4,7 +4,14 @@
         ;; com.phronemophobic/clj-webgpu {:git/url "https://github.com/phronmophobic/clj-webgpu" :git/sha "daa0179c51c2689c3fabaef650afa1719416aa7d"}
         com.phronemophobic.cljonda/webgpu-native-darwin-aarch64 {:mvn/version "v0.19.4.1"}
         com.phronemophobic.cljonda/webgpu-native-linux-x86-64 {:mvn/version "v0.19.4.1"}
-        com.phronemophobic.cljonda/webgpu-native-darwin-x86-64 {:mvn/version "v0.19.4.1"}}
+        com.phronemophobic.cljonda/webgpu-native-darwin-x86-64 {:mvn/version "v0.19.4.1"}
+
+        org.clojars.cartesiantheatrics/clj-manifold3d {:mvn/version "0.1.0"}
+        com.phronemophobic/clogif {:mvn/version "1.4"}
+        com.phronemophobic/membrane {:mvn/version "0.14.4-beta"}
+        com.phronemophobic/clong {:local/root "/Users/adrian/workspace/clong"}
+        net.mikera/core.matrix {:mvn/version "0.63.0"}
+        }
  :aliases
  {
   :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.4"}
@@ -12,5 +19,8 @@
           :ns-default build}
 
   :project
-  {:extra-deps {}
+  {:extra-deps {org.bytedeco/llvm-platform {:mvn/version "16.0.4-1.5.9"}
+                org.clojars.cartesiantheatrics/manifold3d$macosx-arm64 {:local/root "/Users/adrian/workspace/manifold/bindings/java/target/manifold3d-1.0.39.jar" }
+                com.phronemophobic.cljonda/webgpu-native-darwin-aarch64 {:mvn/version "v0.19.4.1"}}
+   :jvm-opts ["-Djava.library.path=/opt/local/lib"]
    }}}

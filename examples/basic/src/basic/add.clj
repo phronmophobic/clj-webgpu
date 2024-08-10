@@ -56,7 +56,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         _ (gpu/copy-to-buffer ctx buf1 v1)
         _ (gpu/copy-to-buffer ctx buf2 v2)
 
-        _ (gpu/dispatch ctx {:shader shader
+        _ (gpu/compute ctx {:shader shader
                              :workgroups {:x (alength v1)}
                              :bindings [buf1 buf2 out]})
 

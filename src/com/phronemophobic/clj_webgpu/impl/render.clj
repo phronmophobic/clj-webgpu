@@ -104,7 +104,7 @@
 (def swapChainFormat raw/WGPUTextureFormat_RGBA8UnormSrgb)
 
 (def targetTextureDesc
-  (raw/map->WGPUTextureDescriptorByReference
+  (raw/map->WGPUTextureDescriptor*
    {:label (->memory "Render texture")
     :dimension raw/WGPUTextureDimension_2D
     :size (raw/map->WGPUExtent3D
@@ -138,7 +138,7 @@
 ;; 	Texture targetTexture = device.createTexture(targetTextureDesc);
 
 (def targetTextureViewDesc
-  (raw/map->WGPUTextureViewDescriptorByReference
+  (raw/map->WGPUTextureViewDescriptor*
    {:label (->memory "Render texture view")
     :baseArrayLayer 0
     :arrayLayerCount 1
@@ -208,10 +208,10 @@ fn fs_main() -> @location(0) vec4f {
 
 (defn load-shader-module [device label code]
   (let [descriptor
-        (raw/map->WGPUShaderModuleDescriptorByReference
+        (raw/map->WGPUShaderModuleDescriptor*
          {:label (->memory label)
           :nextInChain
-          (raw/map->WGPUShaderModuleWGSLDescriptorByReference
+          (raw/map->WGPUShaderModuleWGSLDescriptor*
            {:chain (raw/map->WGPUChainedStruct
                     {:sType raw/WGPUSType_ShaderModuleWGSLDescriptor})
             :code (->memory code)})})]
@@ -246,7 +246,7 @@ fn fs_main() -> @location(0) vec4f {
 ;; 	RenderPipelineDescriptor pipelineDesc;
 
 (def pipelineDesc
-  (raw/map->WGPURenderPipelineDescriptorByReference
+  (raw/map->WGPURenderPipelineDescriptor*
    {:vertex (raw/map->WGPUVertexState
              {:module shaderModule
               :entryPoint (->memory "vs_main")})
@@ -261,15 +261,15 @@ fn fs_main() -> @location(0) vec4f {
     ,
     :fragment
     (ref!
-     (raw/map->WGPUFragmentStateByReference
+     (raw/map->WGPUFragmentState*
       {:module shaderModule
        :entryPoint (->memory "fs_main")
        :targetCount 1
        :targets (ref!
-                 (raw/map->WGPUColorTargetStateByReference
+                 (raw/map->WGPUColorTargetState*
                   {:format swapChainFormat
                    :blend
-                   (raw/map->WGPUBlendStateByReference
+                   (raw/map->WGPUBlendState*
                     {:color
                      (raw/map->WGPUBlendComponent
                       {:srcFactor raw/WGPUBlendFactor_SrcAlpha
@@ -404,7 +404,7 @@ fn fs_main() -> @location(0) vec4f {
 
 (def command-encoder (raw/wgpuDeviceCreateCommandEncoder
                       device
-                      (raw/map->WGPUCommandEncoderDescriptorByReference
+                      (raw/map->WGPUCommandEncoderDescriptor*
                        {:label (->memory "command_encoder")})
                       ))
 
@@ -412,9 +412,9 @@ fn fs_main() -> @location(0) vec4f {
 (def renderPass
   (raw/wgpuCommandEncoderBeginRenderPass
    command-encoder
-   (raw/map->WGPURenderPassDescriptorByReference
+   (raw/map->WGPURenderPassDescriptor*
     {:colorAttachments
-     (raw/map->WGPURenderPassColorAttachmentByReference
+     (raw/map->WGPURenderPassColorAttachment*
       {:view nextTexture
        :resolveTarget nil
        :loadOp raw/WGPULoadOp_Clear
@@ -447,7 +447,7 @@ fn fs_main() -> @location(0) vec4f {
 (def command-buffer
   (raw/wgpuCommandEncoderFinish
    command-encoder
-   (raw/map->WGPUCommandBufferDescriptorByReference
+   (raw/map->WGPUCommandBufferDescriptor*
     {:label (->memory "command_buffer")})))
 
 (raw/wgpuCommandEncoderRelease command-encoder)
@@ -455,8 +455,6 @@ fn fs_main() -> @location(0) vec4f {
                                (.setValue command-buffer)))
 
 (raw/wgpuCommandBufferRelease command-buffer)
-
-
 
 ;; (raw/wgpuRenderPassEncoderDraw)
 ;; 		RenderPassDescriptor renderPassDesc;
@@ -536,19 +534,19 @@ fn fs_main() -> @location(0) vec4f {
 
         encoder (raw/wgpuDeviceCreateCommandEncoder
                  device
-                 (raw/map->WGPUCommandEncoderDescriptorByReference
+                 (raw/map->WGPUCommandEncoderDescriptor*
                   {:label (->memory "command_encoder")})
                  )
         ;; 	// Start encoding the commands
         ;; 	CommandEncoder encoder = device.createCommandEncoder(Default);
 
-        source (raw/map->WGPUImageCopyTextureByReference
+        source (raw/map->WGPUImageCopyTexture*
                 {:texture texture})
         
         pixelBuffer-size (* 4 width height)
         pixelBuffer (raw/wgpuDeviceCreateBuffer
                      device
-                     (raw/map->WGPUBufferDescriptorByReference
+                     (raw/map->WGPUBufferDescriptor*
                       {:usage (int
                                (bit-or raw/WGPUBufferUsage_MapRead raw/WGPUBufferUsage_CopyDst))
                        :size pixelBuffer-size
@@ -561,7 +559,7 @@ fn fs_main() -> @location(0) vec4f {
 	;; Buffer pixelBuffer = device.createBuffer(pixelBufferDesc);
         
 
-        destination (raw/map->WGPUImageCopyBufferByReference
+        destination (raw/map->WGPUImageCopyBuffer*
                      {:buffer pixelBuffer
                       :layout
                       (raw/map->WGPUTextureDataLayout
@@ -572,7 +570,7 @@ fn fs_main() -> @location(0) vec4f {
            encoder
            source
            destination
-           (raw/map->WGPUExtent3DByReference
+           (raw/map->WGPUExtent3D*
             {:width (int width)
              :height (int height)
              :depthOrArrayLayers (int 1)})
@@ -593,7 +591,7 @@ fn fs_main() -> @location(0) vec4f {
 
         command-buffer (raw/wgpuCommandEncoderFinish
                         encoder
-                        (raw/map->WGPUCommandBufferDescriptorByReference
+                        (raw/map->WGPUCommandBufferDescriptor*
                          {:label (->memory "command_buffer")}))
         
         _ (raw/wgpuQueueSubmit queue 1 (doto (PointerByReference.)

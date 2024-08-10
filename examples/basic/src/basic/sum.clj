@@ -70,9 +70,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         _ (doseq [i (range num-steps)
                   :let [stride (apply * (repeat i 2))
                         workgroup-x (ceil (/ len 64 stride))]]
-            (gpu/dispatch ctx {:shader shader
-                               :workgroups {:x workgroup-x}
-                               :bindings [sum (nth uniforms i)]}))
+            (gpu/compute ctx {:shader shader
+                              :workgroups {:x workgroup-x}
+                              :bindings [sum (nth uniforms i)]}))
 
         _ (gpu/copy ctx sum staging-buf)
         result (gpu/copy-from-buffer ctx staging-buf)]
@@ -83,5 +83,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
   (def len 3709333)
   (def v1 (float-array (repeatedly len rand)))
 
+  (prn (time (sum-cpu v1)))
   (prn (first (time (sum-gpu v1))))
-  (prn (time (sum-cpu v1))))
+  ,)
