@@ -224,14 +224,26 @@
                  :bytesPerRow (* 4 width)
                  :rowsPerImage height})
 
+        ;; convert from ABGR to RGBA
+        _ (doseq [i (range (* width height))
+                  :let [idx (* 4 i)
+                        a (aget pixel-data (+ idx 0))
+                        b (aget pixel-data (+ idx 1))
+                        g (aget pixel-data (+ idx 2))
+                        r (aget pixel-data (+ idx 3))]]
+            (aset pixel-data (+ idx 0) r)
+            (aset pixel-data (+ idx 1) g)
+            (aset pixel-data (+ idx 2) b)
+            (aset pixel-data (+ idx 3) a))
+
         pixel-buf (doto (Memory. (alength pixel-data))
                     (.write 0 pixel-data 0 (alength pixel-data)))
+
         texture-size* (raw/map->WGPUExtent3D*
                        {:width width
                         :height height
                         :depthOrArrayLayers 1})
         _ (raw/wgpuQueueWriteTexture queue destination pixel-data (alength pixel-data) source texture-size*)
-
 
         ;; TextureViewDescriptor textureViewDesc;
         ;; textureViewDesc.aspect = WGPUTextureAspect_All;

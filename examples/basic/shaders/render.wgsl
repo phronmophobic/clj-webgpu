@@ -41,16 +41,6 @@ fn fs_main(fsInput: OurVertexShaderOutput) -> @location(0) vec4f {
     coord.x = edge/2.0 + (1.0 - edge)*coord.x;
     coord.y = edge/2.0 + (1.0 - edge)*coord.y;
     var color = textureSample(ourTexture, ourSampler, coord);
- var oldr = color.r;
- var oldg = color.g;
- var oldb = color.b;
- var olda = color.a;
-
- // convert from BufferedImage/TYPE_4BYTE_ABGR to raw/WGPUTextureFormat_RGBA8Unorm
- color.r = olda;
- color.b = oldg;
- color.g = oldb;
- color.a = oldr;
 
  return color;
 
