@@ -206,7 +206,7 @@
 
 (defn load-image
   "`src` can be any value supported by clojure.java.io/input-stream."
-  [src]
+  ^BufferedImage [src]
   (with-open [is (clojure.java.io/input-stream src)]
     (let [image-stream (ImageIO/createImageInputStream is)
           buffered-image (ImageIO/read image-stream)]
