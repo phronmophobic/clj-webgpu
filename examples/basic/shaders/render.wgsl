@@ -42,10 +42,10 @@ fn fs_main(fsInput: OurVertexShaderOutput) -> @location(0) vec4f {
     coord.y = edge/2.0 + (1.0 - edge)*coord.y;
     var color = textureSample(ourTexture, ourSampler, coord);
 
+    if ( color.a < 0.2 ){
+	var gray = 0.5 + 0.5*(fract(fsInput.position.x/10));
+	color = vec4f(gray, gray, gray, 1.0);
+    }
+
  return color;
-
-
-
-
-
 }
