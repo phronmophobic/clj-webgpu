@@ -11,8 +11,12 @@
    com.sun.jna.Pointer
    com.sun.jna.ptr.PointerByReference
    com.sun.jna.ptr.LongByReference
-   com.sun.jna.Structure)
+   com.sun.jna.Structure
+   java.lang.ref.Cleaner)
   (:gen-class))
+
+(defonce ^:private cleaner
+  (delay (Cleaner/create)))
 
 (def libwebgpu
   (com.sun.jna.NativeLibrary/getInstance "wgpu_native"))
@@ -102,4 +106,35 @@
 
 (gen/def-struct-constructors (:structs api))
 
+(def ^:private
+  array-info-by-id
+  (into {}
+        (map (fn [{:keys [id size-in-bytes]}]
+               [id {:size-in-bytes size-in-bytes
+                    :class (Class/forName (str (gen/ns-struct-prefix *ns*) "." (name id) "ByReference"))
+                    :mergef @(ns-resolve *ns* (symbol (str "merge->" (name id))))}]))
+        (:structs api)))
 
+(defn struct-array [id ms]
+  (when (seq ms)
+    (let [{:keys [size-in-bytes mergef class] :as m} (get array-info-by-id id)
+          _ (when (not m)
+              (throw (ex-info "Unknown struct id"
+                              {:id id
+                               :ms ms})))
+          mem (Memory. (* size-in-bytes (count ms)))
+
+          first-struct (Structure/newInstance class
+                                              (.share mem 0 size-in-bytes))
+          ref (volatile! mem)]
+      (.register ^Cleaner @cleaner first-struct
+               (fn []
+                 ;; hang onto memory
+                 (vreset! ref nil)))
+      (doseq [[i m] (map-indexed vector ms)]
+        (let [struct (Structure/newInstance class
+                                            (.share mem (* i size-in-bytes) size-in-bytes))]
+          (mergef struct m)))
+      (doto first-struct
+        ;; otherwise, struct uses wrong data :(
+        .read))))

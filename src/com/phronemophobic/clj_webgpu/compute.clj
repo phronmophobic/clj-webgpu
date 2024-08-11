@@ -13,7 +13,7 @@
    com.sun.jna.Structure
    java.awt.image.BufferedImage
    javax.imageio.ImageIO
-
+   java.lang.ref.Cleaner
    (com.phronemophobic.clj_webgpu.impl.raw.structs
     WGPUBindGroupLayoutEntryByReference
     WGPUShaderModuleDescriptorByReference
@@ -30,9 +30,79 @@
   (:gen-class))
 
 
+(defonce ^:private cleaner
+  (delay (Cleaner/create)))
+
 (defn ^:private write-field [^Structure o field val]
   (.writeField o field val)
   o)
+
+
+(defn ^:private deep-merge
+  ([] {})
+  ([m]
+   m)
+  ([m & ms]
+   (apply merge-with deep-merge m ms)))
+
+(defn ^:private convert-kws [m kw-f-pairs]
+  (reduce
+   (fn [m [kw f]]
+     (cond
+
+       (vector? kw)
+       (if (get-in m kw)
+         (update-in m kw f)
+         m)
+
+       (kw m)
+       (update m kw f)
+
+       :else 
+       m))
+   m
+   kw-f-pairs))
+
+(defmacro defenum [var-name private-name enum]
+  `(do
+     (let [soffset# (inc (count ~enum))
+           m# (into {}
+                    (comp
+                     (keep (fn [{:keys [~'enum ~'name ~'value]}]
+                             (when (= ~'enum ~enum)
+                               [(keyword (subs ~'name soffset#))
+                                ~'value]))))
+                    (:enums raw/api))]
+      (defn ~(with-meta private-name {:private true})
+        [kw#]
+        (if-let [v# (get m# kw#)]
+          v#
+          (throw (ex-info "Unknown enum"
+                          {:kw kw#}))
+          ))
+      (def ~var-name
+        ~(str "Possible " var-name)
+        (into #{} (keys m#)))))
+  )
+
+(defn ^:private camel-to-kebab-case
+  "Converts camelCase string to kebab-case."
+  [s]
+  (->> (re-seq #"[^A-Z]+|[A-Z][^A-Z]*" s)
+       (map #(clojure.string/lower-case %))
+       (clojure.string/join "-")))
+
+
+(defmacro defenums []
+  `(do
+     ~@(eduction
+
+        (map (fn [enum]
+               (let [enum-name (subs (:enum enum) 4)
+                     kb (camel-to-kebab-case enum-name)]
+                `(defenum ~(symbol (str kb "s")) ~(symbol (str "kw->" kb)) ~(:enum enum)))))
+        (:enums raw/api))))
+(defenums)
 
 
 ;; https://developer.mozilla.org/en-US/docs/Web/API/GPUBuffer/usage
@@ -69,19 +139,18 @@
   (swap! refs conj o)
   o)
 
-(defn ^:private  ->memory [o]
-  (ref!
-   (case (.getCanonicalName ^Class (type o))
-     "java.lang.String" (let [^String o o
-                              buf (.getBytes o "utf-8")
-                              len (alength buf)]
-                          (doto (Memory. (inc len))
-                            (.write 0 buf 0 len)
-                            (.setByte len 0)))
+(defn ^:private ->memory [o]
+  (case (.getCanonicalName ^Class (type o))
+    "java.lang.String" (let [^String o o
+                             buf (.getBytes o "utf-8")
+                             len (alength buf)]
+                         (doto (Memory. (inc len))
+                           (.write 0 buf 0 len)
+                           (.setByte len 0)))
 
-     "byte[]" (let [^bytes o o]
-                (doto (Memory. (alength o))
-                  (.write 0 o 0 (alength o)))))))
+    "byte[]" (let [^bytes o o]
+               (doto (Memory. (alength o))
+                 (.write 0 o 0 (alength o))))))
 
 
 (defn create-context []
@@ -298,6 +367,18 @@
         :compare raw/WGPUCompareFunction_Undefined
         :maxAnisotropy 1}))}))
 
+(defn ^:private clean-ptr
+  ([ptr f]
+   (clean-ptr ptr f nil))
+  ([ptr f refs]
+   (let [raw-ptr (Pointer/nativeValue ptr)
+         refs* (volatile! (set refs))]
+     (.register ^Cleaner @cleaner ptr
+                (fn []
+                  (f raw-ptr)
+                  (vreset! refs* nil)))
+     nil)) )
+
 (defn create-shader [ctx {:keys [src label]}]
   (let [chain (doto (WGPUChainedStruct.)
                 (.writeField "sType" raw/WGPUSType_ShaderModuleWGSLDescriptor))
@@ -321,6 +402,8 @@
     ;; I'm not sure this is required, but the purpose
     ;; is to prevent the unlikely gc of these before the shader is created.
     (identity [chain descriptor])
+    (clean-ptr shader raw/wgpuShaderModuleRelease)
+
     shader))
 
 (defn copy-to-buffer [ctx buffer data]
@@ -587,64 +670,64 @@
                o)
 
 
-        layout
-        (raw/wgpuDeviceCreatePipelineLayout
-         device
-         (let [
+        ;; layout
+        ;; (raw/wgpuDeviceCreatePipelineLayout
+        ;;  device
+        ;;  (let [
 
-               ^objects
-               entries-arr (ref!
-                            (.toArray (WGPUBindGroupLayoutEntryByReference.) (count bindings)))
+        ;;        ^objects
+        ;;        entries-arr (ref!
+        ;;                     (.toArray (WGPUBindGroupLayoutEntryByReference.) (count bindings)))
 
-               _ (doseq [[i binding] (map-indexed vector bindings)]
-                   (raw/merge->WGPUBindGroupLayoutEntry
-                    (aget entries-arr i)
-                    (cond
-                      (:buffer binding)
-                      {:binding i
-                       :visibility raw/WGPUShaderStage_Compute
-                       #_(bit-or 
-                          raw/WGPUShaderStage_Vertex
-                          raw/WGPUShaderStage_Fragment)
+        ;;        _ (doseq [[i binding] (map-indexed vector bindings)]
+        ;;            (raw/merge->WGPUBindGroupLayoutEntry
+        ;;             (aget entries-arr i)
+        ;;             (cond
+        ;;               (:buffer binding)
+        ;;               {:binding i
+        ;;                :visibility raw/WGPUShaderStage_Compute
+        ;;                #_(bit-or 
+        ;;                   raw/WGPUShaderStage_Vertex
+        ;;                   raw/WGPUShaderStage_Fragment)
                        
-                       :buffer (raw/map->WGPUBufferBindingLayout
-                                {:type (cond
-                                         (:Uniform (:usage binding))
-                                         raw/WGPUBufferBindingType_Uniform
+        ;;                :buffer (raw/map->WGPUBufferBindingLayout
+        ;;                         {:type (cond
+        ;;                                  (:Uniform (:usage binding))
+        ;;                                  raw/WGPUBufferBindingType_Uniform
 
-                                         (:Storage (:usage binding))
-                                         raw/WGPUBufferBindingType_Storage
+        ;;                                  (:Storage (:usage binding))
+        ;;                                  raw/WGPUBufferBindingType_Storage
 
-                                         :else (throw (ex-info "Unknown Binding type"
-                                                               {:binding binding})))
-                                 :minBindingSize (:size binding)}
-                                )}
-                      (:texture-view binding)
-                      {:binding i
-                       :visibility raw/WGPUShaderStage_Fragment
-                       :texture (raw/map->WGPUTextureBindingLayout
-                                 {:sampleType raw/WGPUTextureSampleType_Float
-                                  :viewDimension raw/WGPUTextureDimension_2D})}
+        ;;                                  :else (throw (ex-info "Unknown Binding type"
+        ;;                                                        {:binding binding})))
+        ;;                          :minBindingSize (:size binding)}
+        ;;                         )}
+        ;;               (:texture-view binding)
+        ;;               {:binding i
+        ;;                :visibility raw/WGPUShaderStage_Fragment
+        ;;                :texture (raw/map->WGPUTextureBindingLayout
+        ;;                          {:sampleType raw/WGPUTextureSampleType_Float
+        ;;                           :viewDimension raw/WGPUTextureDimension_2D})}
 
-                      (:sampler binding)
-                      {:binding i
-                       :visibility raw/WGPUShaderStage_Fragment
-                       :sampler (raw/map->WGPUSamplerBindingLayout
-                                 {:type raw/WGPUSamplerBindingType_Filtering})}
+        ;;               (:sampler binding)
+        ;;               {:binding i
+        ;;                :visibility raw/WGPUShaderStage_Fragment
+        ;;                :sampler (raw/map->WGPUSamplerBindingLayout
+        ;;                          {:type raw/WGPUSamplerBindingType_Filtering})}
 
-                      :else (throw (ex-info "Unknown binding type"
-                                            {:binding binding})))))]
-           (raw/map->WGPUPipelineLayoutDescriptor*
-            {:label (->memory "pipeline layout")
-             :bindGroupLayoutCount 1
-             :bindGroupLayouts
-             (PointerByReference.
-              (raw/wgpuDeviceCreateBindGroupLayout
-               device
-               (raw/map->WGPUBindGroupLayoutDescriptor*
-                {:label (->memory "layouts")
-                 :entries (aget entries-arr 0)
-                 :entryCount (alength entries-arr)})))})))
+        ;;               :else (throw (ex-info "Unknown binding type"
+        ;;                                     {:binding binding})))))]
+        ;;    (raw/map->WGPUPipelineLayoutDescriptor*
+        ;;     {:label (->memory "pipeline layout")
+        ;;      :bindGroupLayoutCount 1
+        ;;      :bindGroupLayouts
+        ;;      (PointerByReference.
+        ;;       (raw/wgpuDeviceCreateBindGroupLayout
+        ;;        device
+        ;;        (raw/map->WGPUBindGroupLayoutDescriptor*
+        ;;         {:label (->memory "layouts")
+        ;;          :entries (aget entries-arr 0)
+        ;;          :entryCount (alength entries-arr)})))})))
 
 
         render-pipeline-descriptor
@@ -701,7 +784,6 @@
                           ,
                           :writeMask raw/WGPUColorWriteMask_All})
                         ,)}))
-
            :multisample
            (raw/map->WGPUMultisampleState
             {:count (int 1)
@@ -916,3 +998,319 @@
   (prn (create-buffer (create-context)
                       {:size 10
                        :usage #{:MapRead :CopyDst}})))
+
+
+(defn create-texture
+    "Creates a texture. Also automatically creates a matching texture view using the same properties as the underlying texture.
+
+  The following options are available
+  :label A name for the texture. Can be useful for debugging.
+  :view-label A name for the texture view. Can be useful for debugging.
+  :size A mape like {:width width :height height :depthOrArraylayers 1}
+  :mipLevelCount default 1
+  :sampleCount default 1
+  :dimension one of #{:d1 :d2 :d3 :force32}. default :d2
+  :format one of `texture-formats`. default :RGBA8Unorm
+  :usage A subset of #{:CopyDst :Force32 :StorageBinding :None :TextureBinding :CopySrc :RenderAttachment}.
+  :aspect One of #{:Force32 :All :StencilOnly :DepthOnly}
+  
+"
+    [ctx texture-descriptor]
+  (let [texture-descriptor
+        (convert-kws
+         texture-descriptor
+         [[:label ->memory]
+          [:size raw/map->WGPUExtent3D]
+          [:dimension kw->texture-dimension]
+          [:format kw->texture-format]
+          [:usage #(reduce
+                    (fn [i kw]
+                      (bit-or i (kw->texture-usage kw)))
+                    0
+                    %)]])
+
+        texture (raw/wgpuDeviceCreateTexture
+                 (:device ctx)
+                 (raw/map->WGPUTextureDescriptor* texture-descriptor))]
+    (clean-ptr texture raw/wgpuTextureRelease)
+    texture))
+
+(defn create-texture-view [texture texture-view-descriptor]
+  (let [texture-view-descriptor
+        (convert-kws
+         texture-view-descriptor
+         [[:label ->memory]
+          [:aspect kw->texture-aspect]
+          [:format kw->texture-format]
+          [:dimension kw->texture-dimension]])
+
+        texture-view (raw/wgpuTextureCreateView
+                      texture
+                      (raw/map->WGPUTextureViewDescriptor*
+                       texture-view-descriptor))
+        ]
+    (clean-ptr texture-view raw/wgpuTextureViewRelease [texture])
+    texture-view))
+
+(defn poll [device wait?]
+  (raw/wgpuDevicePoll device (if wait? 1 0)  nil))
+
+
+(defn create-bind-group [device bind-group-layout bindings]
+  (let [entries (raw/struct-array
+                 :clong/WGPUBindGroupEntry
+                 (into []
+                       (map-indexed
+                        (fn [i binding]
+                          (cond
+                            (:buffer binding)
+                            {:binding i
+                             :buffer (:buffer binding)
+                             :offset 0
+                             :size (:size binding)}
+
+                            (:texture-view binding)
+                            {:binding i
+                             :textureView (:texture-view binding)}
+
+                            (:sampler binding)
+                            {:binding i
+                             :sampler (:sampler binding)}
+
+                            :else (throw (ex-info "Unknown buffer type"
+                                                  {:binding binding})))))
+                       bindings))
+
+        bind-group (raw/wgpuDeviceCreateBindGroup
+                    device
+                    (raw/map->WGPUBindGroupDescriptor*
+                     {:layout bind-group-layout
+                      :entryCount (count bindings)
+                      :entries entries}
+                     ))]
+    (clean-ptr bind-group raw/wgpuBindGroupRelease)
+    bind-group))
+
+(defn encode-compute-pass [ctx command-encoder pass])
+(defn encode-render-pass [ctx command-encoder pass]
+  (let [draws (:draws pass)
+        pass (:render-pass pass)
+
+        render-pass (raw/wgpuCommandEncoderBeginRenderPass
+                     command-encoder
+                     (raw/map->WGPURenderPassDescriptor*
+                      (merge
+                       pass
+                       {:colorAttachmentCount (count (:colorAttachments pass))
+                        :colorAttachments
+                        (raw/struct-array
+                         :clong/WGPURenderPassColorAttachment
+                         (into []
+                               (map (fn [color-attachment]
+                                      (prn color-attachment)
+                                      (convert-kws
+                                       color-attachment
+                                       [[:loadOp kw->load-op]
+                                        [:storeOp kw->store-op]
+                                        [:clearValue raw/map->WGPUColor]])))
+                               (:colorAttachments pass)))
+                        :depthStencilAttachment
+                        (raw/map->WGPURenderPassDepthStencilAttachment*
+                         (convert-kws
+                          (:depthStencilAttachment pass)
+                          [[:depthLoadOp kw->load-op]
+                           [:depthStoreOp kw->store-op]]))})))]
+    (doseq [draw draws]
+      (let [pipeline (:pipeline draw)
+            group 0]
+        (raw/wgpuRenderPassEncoderSetPipeline render-pass pipeline)
+        (when (seq (:bindings draw))
+          (let [bind-group-layout (raw/wgpuRenderPipelineGetBindGroupLayout pipeline group)
+                bind-group (create-bind-group (:device ctx) bind-group-layout (:bindings draw))]
+            (raw/wgpuRenderPassEncoderSetBindGroup render-pass group bind-group 0 nil)))
+        (raw/wgpuRenderPassEncoderDraw  render-pass (:vertex-count draw) (:instance-count draw 1) (:first-instance draw 0) (:first-vertex draw 0))))
+    (raw/wgpuRenderPassEncoderEnd render-pass)
+    (raw/wgpuRenderPassEncoderRelease render-pass)
+    nil))
+
+(defn submit [ctx passes]
+
+  (let [group 0
+        device (:device ctx)
+        queue (:queue ctx)
+
+        command-encoder (raw/wgpuDeviceCreateCommandEncoder
+                         device
+                         (raw/map->WGPUCommandEncoderDescriptor*
+                          {}))
+
+        _ (doseq [pass passes]
+            (cond
+              (:render-pass pass)
+              (encode-render-pass ctx command-encoder pass)
+
+              (:compute-pass pass)
+              (encode-compute-pass ctx command-encoder pass)
+
+              :else (throw (ex-info "Unrecognized pass"
+                                    {:pass pass}))))
+
+        command-buffer (raw/wgpuCommandEncoderFinish
+                        command-encoder
+                        (raw/map->WGPUCommandBufferDescriptor*
+                         {}))
+
+        _ (raw/wgpuCommandEncoderRelease command-encoder)
+
+        _ (raw/wgpuQueueSubmit queue 1 (doto (PointerByReference.)
+                                         (.setValue command-buffer)))
+        _ (raw/wgpuCommandBufferRelease command-buffer)]
+    nil))
+
+
+(defn pipeline-3d [{:keys [vertex-shader
+                           fragment-shader]}]
+  {:primitive {:topology :TriangleList
+               :cullMode :Back}
+   :vertex (merge
+            {:entryPoint "vs_main"}
+            vertex-shader)
+   :fragment (merge
+              {:entryPoint "fs_main"
+               :targets [{:format :RGBA8UnormSrgb
+                          :blend
+                          {:color
+                           {:srcFactor :SrcAlpha
+                            :dstFactor :OneMinusSrcAlpha
+                            :operation :Add}
+                           :alpha
+                           {:srcFactor :Zero
+                            :dstFactor :One
+                            :operation :Add}}
+                          :writeMask :All}]}
+              fragment-shader)
+   :depthStencil {:stencilReadMask 0
+                  :stencilWriteMask 0
+                  :depthBias 0
+                  :depthBiasSlopeScale 0
+                  :depthBiasClamp 0
+                  :depthWriteEnabled 1
+                  :depthCompare :Less
+                  :format :Depth24Plus
+                  :stencilBack {:compare :Always
+                                :failOp  :Keep
+                                :depthFailOp :Keep
+                                :passOp :Keep}
+                  :stencilFront {:compare :Always
+                                 :failOp  :Keep
+                                 :depthFailOp :Keep
+                                 :passOp :Keep}}
+   :multisample {:count (int 1)
+                 :mask (int -1)
+                 :alphaToCoverageEnabled (int 0)}})
+
+
+
+
+(defn create-pipeline [ctx pipeline-descriptor]
+  (let [
+        ;; convert strings to Memory for some key paths
+        pipeline-descriptor
+        (convert-kws
+         pipeline-descriptor
+         [[[:vertex :entryPoint] ->memory]
+          [[:fragment :entryPoint] ->memory]])
+
+        ->stencil (fn [m]
+                    (raw/map->WGPUStencilFaceState
+                     (convert-kws m
+                                  [[:compare kw->compare-function]
+                                   [:failOp kw->stencil-operation]
+                                   [:depthFailOp kw->stencil-operation]
+                                   [:passOp kw->stencil-operation]])))
+
+        ->blend-component
+        (fn [m]
+          (raw/map->WGPUBlendComponent
+           (convert-kws m
+                        [[:srcFactor kw->blend-factor ]
+                         [:dstFactor kw->blend-factor]
+                         [:operation kw->blend-operation]])))
+
+        ->blend-state
+        (fn [m]
+          (raw/map->WGPUBlendState*
+           (convert-kws m
+                        [[:color ->blend-component]
+                         [:alpha ->blend-component]])))
+
+        pipeline-descriptor
+        (update pipeline-descriptor
+                :fragment
+                (fn [fragment]
+                  (merge
+                   fragment
+                   {:targets (raw/struct-array
+                              :clong/WGPUColorTargetState
+                              (into []
+                                    (map (fn [target]
+                                           (convert-kws target
+                                                        [[:format kw->texture-format]
+                                                         [:blend ->blend-state]
+                                                         [:writeMask kw->color-write-mask]])))
+                                    (:targets fragment)))
+                    :targetCount (count (:targets fragment))})))
+
+        descriptor*
+        (raw/map->WGPURenderPipelineDescriptor*
+         {:vertex (raw/map->WGPUVertexState
+                   (:vertex pipeline-descriptor))
+          :primitive
+          (raw/map->WGPUPrimitiveState
+           (convert-kws
+            (:primitive pipeline-descriptor)
+            [[:topology kw->primitive-topology]
+             [:cullMode kw->cull-mode]]))
+          :depthStencil
+          (raw/map->WGPUDepthStencilState*
+             (convert-kws
+              (:depthStencil pipeline-descriptor)
+              [[:depthCompare kw->compare-function]
+               [:format kw->texture-format]
+               [:stencilBack ->stencil]
+               [:stencilFront ->stencil]]))
+          :fragment
+          (raw/map->WGPUFragmentState*
+           (:fragment pipeline-descriptor))
+          :multisample
+          (raw/map->WGPUMultisampleState
+           (:multisample pipeline-descriptor))
+          ,})
+        pipeline (raw/wgpuDeviceCreateRenderPipeline (:device ctx) descriptor*)
+
+        ;; hang onto shader modules
+        refs (volatile! (set [(get-in pipeline-descriptor [:vertex :module])
+                              (get-in pipeline-descriptor [:fragment :module])]))]
+    (assert pipeline)
+    (clean-ptr pipeline
+               (fn [p]
+                 (raw/wgpuRenderPipelineRelease p)
+                 (vreset! refs nil)))
+    pipeline))
+
+(defn render-pass-3d [{:keys [depth-texture-view texture-view]}]
+  {:depthStencilAttachment
+   {:depthClearValue 1.0
+    :depthLoadOp :Clear
+    :depthStoreOp :Store
+    :view depth-texture-view}
+   :colorAttachments
+   [{:view texture-view
+     :loadOp :Clear
+     :resolveTarget nil
+     :storeOp :Store
+     :clearValue {:r 0.9
+                  :g 0.1
+                  :b 0.2
+                  :a 1.0}}]})
+
