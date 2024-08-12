@@ -53,7 +53,8 @@
                 (.triVerts mesh)))
               (float-array
                (eduction
-                (map rand)
+                (map (fn [_]
+                       1.0))
                 (range (alength (mesh->verts mesh))))))]
     (identity mesh)
     buf))
