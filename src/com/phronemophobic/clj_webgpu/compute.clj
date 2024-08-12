@@ -1107,7 +1107,6 @@
                          :clong/WGPURenderPassColorAttachment
                          (into []
                                (map (fn [color-attachment]
-                                      (prn color-attachment)
                                       (convert-kws
                                        color-attachment
                                        [[:loadOp kw->load-op]
@@ -1168,46 +1167,7 @@
     nil))
 
 
-(defn pipeline-3d [{:keys [vertex-shader
-                           fragment-shader]}]
-  {:primitive {:topology :TriangleList
-               :cullMode :Back}
-   :vertex (merge
-            {:entryPoint "vs_main"}
-            vertex-shader)
-   :fragment (merge
-              {:entryPoint "fs_main"
-               :targets [{:format :RGBA8UnormSrgb
-                          :blend
-                          {:color
-                           {:srcFactor :SrcAlpha
-                            :dstFactor :OneMinusSrcAlpha
-                            :operation :Add}
-                           :alpha
-                           {:srcFactor :Zero
-                            :dstFactor :One
-                            :operation :Add}}
-                          :writeMask :All}]}
-              fragment-shader)
-   :depthStencil {:stencilReadMask 0
-                  :stencilWriteMask 0
-                  :depthBias 0
-                  :depthBiasSlopeScale 0
-                  :depthBiasClamp 0
-                  :depthWriteEnabled 1
-                  :depthCompare :Less
-                  :format :Depth24Plus
-                  :stencilBack {:compare :Always
-                                :failOp  :Keep
-                                :depthFailOp :Keep
-                                :passOp :Keep}
-                  :stencilFront {:compare :Always
-                                 :failOp  :Keep
-                                 :depthFailOp :Keep
-                                 :passOp :Keep}}
-   :multisample {:count (int 1)
-                 :mask (int -1)
-                 :alphaToCoverageEnabled (int 0)}})
+
 
 
 
@@ -1298,19 +1258,5 @@
                  (vreset! refs nil)))
     pipeline))
 
-(defn render-pass-3d [{:keys [depth-texture-view texture-view]}]
-  {:depthStencilAttachment
-   {:depthClearValue 1.0
-    :depthLoadOp :Clear
-    :depthStoreOp :Store
-    :view depth-texture-view}
-   :colorAttachments
-   [{:view texture-view
-     :loadOp :Clear
-     :resolveTarget nil
-     :storeOp :Store
-     :clearValue {:r 0.9
-                  :g 0.1
-                  :b 0.2
-                  :a 1.0}}]})
+
 
