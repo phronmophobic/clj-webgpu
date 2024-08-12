@@ -33,6 +33,18 @@
 (defonce ^:private cleaner
   (delay (Cleaner/create)))
 
+(defn ^:private clean-ptr
+  ([ptr f]
+   (clean-ptr ptr f nil))
+  ([ptr f refs]
+   (let [raw-ptr (Pointer/nativeValue ptr)
+         refs* (volatile! (set refs))]
+     (.register ^Cleaner @cleaner ptr
+                (fn []
+                  (f raw-ptr)
+                  (vreset! refs* nil)))
+     nil)) )
+
 (defn ^:private write-field [^Structure o field val]
   (.writeField o field val)
   o)
@@ -148,37 +160,55 @@
                  (.write 0 o 0 (alength o))))))
 
 
-(defn create-context []
-  (let [instance (raw/wgpuCreateInstance nil)
-        adapter* (promise)
-        _ (raw/wgpuInstanceRequestAdapter instance
+(defonce ^:private
+  ctx*
+  (delay
+    (let [instance (raw/wgpuCreateInstance nil)
+          _ (clean-ptr instance
+                       raw/wgpuInstanceRelease)
+          adapter* (promise)
+          _ (raw/wgpuInstanceRequestAdapter instance
+                                            nil
+                                            (fn [status adapter message user-date]
+                                              (deliver adapter* adapter))
+                                            nil)
+          _ (clean-ptr @adapter*
+                       raw/wgpuAdapterRelease)
+
+          supported-limits (raw/map->WGPUSupportedLimits* {} )
+          _ (raw/wgpuAdapterGetLimits @adapter*
+                                      supported-limits)
+
+          device* (promise)
+          _ (raw/wgpuAdapterRequestDevice @adapter*
                                           nil
-                                          (fn [status adapter message user-date]
-                                            (deliver adapter* adapter))
+                                          #_(raw/map->WGPUDeviceDescriptor*
+                                             {:requiredLimits
+                                              (raw/map->WGPURequiredLimits*
+                                               {:limits 
+                                                (raw/map->WGPULimits
+                                                 (assoc (into {} (:limits supported-limits))
+                                                        :maxTextureDimension2D 1000))})})
+                                          (fn [status device message user-data]
+                                            (deliver device* device))
                                           nil)
+          _ (clean-ptr @device*
+                       raw/wgpuDeviceRelease
+                       [instance])
+          queue (raw/wgpuDeviceGetQueue @device*)
+          _ (clean-ptr queue
+                       raw/wgpuQueueRelease
+                       [@device*])
+          ]
+      {:instance instance
+       :adapter @adapter*
+       :device @device*
+       :queue queue})))
 
-        ;; supported-limits (raw/map->WGPUSupportedLimits* {} )
-        ;; _ (raw/wgpuAdapterGetLimits @adapter*
-        ;;                                  supported-limits)
-
-        device* (promise)
-        _ (raw/wgpuAdapterRequestDevice @adapter*
-                                        nil
-                                        #_(raw/map->WGPUDeviceDescriptor*
-                                           {:requiredLimits
-                                            (raw/map->WGPURequiredLimits*
-                                             {:limits 
-                                              (raw/map->WGPULimits
-                                               (assoc (into {} (:limits supported-limits))
-                                                      :maxTextureDimension2D 1000))})})
-                                        (fn [status device message user-data]
-                                          (deliver device* device))
-                                        nil)]
-    {:instance instance
-     :adapter @adapter*
-     :device @device*
-     :queue (raw/wgpuDeviceGetQueue @device*)})
-  )
+(defn create-context []
+  ;; Recreating ctxs seems to eventually crash,
+  ;; even with proper releasing.
+  @ctx*)
 
 (defn create-buffer [ctx {:keys [label usage length type mapped-at-creation?] :as m}]
   (let [size (* length (get buffer-type-sizes type))
@@ -193,10 +223,13 @@
                                                 (bit-or flags (get usage-flags kw)))
                                               0
                                               usage)))
-                     label (write-field "label" (->memory label)))]
+                     label (write-field "label" (->memory label)))
+        buffer (raw/wgpuDeviceCreateBuffer (:device ctx) descriptor)]
+    (clean-ptr buffer
+               raw/wgpuBufferRelease)
     (merge
      m
-     {:buffer (raw/wgpuDeviceCreateBuffer (:device ctx) descriptor)
+     {:buffer buffer
       :size size})))
 
 (defn load-image
@@ -249,7 +282,8 @@
                       :sampleCount 1
                       :usage (bit-or raw/WGPUTextureUsage_TextureBinding raw/WGPUTextureUsage_CopyDst)})
         texture (raw/wgpuDeviceCreateTexture device textureDesc)
-
+        _ (clean-ptr texture
+                     raw/wgpuTextureRelease)
 
         ;; // Auxiliary function for loadTexture
         ;; static void writeMipMaps(
@@ -327,7 +361,9 @@
                         :baseMipLevel 0
                         :mipLevelCount 1
                         :dimension raw/WGPUTextureViewDimension_2D
-                        :format (:format textureDesc)}))]
+                        :format (:format textureDesc)}))
+        _ (clean-ptr texture-view
+                     raw/wgpuTextureViewRelease)]
     {:texture texture
      :texture-view texture-view}))
 
@@ -345,34 +381,25 @@
 	;; samplerDesc.compare = CompareFunction::Undefined;
 	;; samplerDesc.maxAnisotropy = 1;
 	;; Sampler sampler = device.createSampler(samplerDesc);
-        ]
-    {:sampler
-     (raw/wgpuDeviceCreateSampler
-      (:device ctx)
-      (raw/map->WGPUSamplerDescriptor*
-       {
-        :addressModeU raw/WGPUAddressMode_Repeat
-        :addressModeV raw/WGPUAddressMode_Repeat
-        :addressModeW raw/WGPUAddressMode_Repeat
-        :magFilter raw/WGPUFilterMode_Linear
-        :minFilter raw/WGPUFilterMode_Linear
-        :mipmapFilter raw/WGPUMipmapFilterMode_Linear
-        :lodMinClamp 0.0
-        :lodMaxClamp 8.0
-        :compare raw/WGPUCompareFunction_Undefined
-        :maxAnisotropy 1}))}))
+        sampler (raw/wgpuDeviceCreateSampler
+                 (:device ctx)
+                 (raw/map->WGPUSamplerDescriptor*
+                  {
+                   :addressModeU raw/WGPUAddressMode_Repeat
+                   :addressModeV raw/WGPUAddressMode_Repeat
+                   :addressModeW raw/WGPUAddressMode_Repeat
+                   :magFilter raw/WGPUFilterMode_Linear
+                   :minFilter raw/WGPUFilterMode_Linear
+                   :mipmapFilter raw/WGPUMipmapFilterMode_Linear
+                   :lodMinClamp 0.0
+                   :lodMaxClamp 8.0
+                   :compare raw/WGPUCompareFunction_Undefined
+                   :maxAnisotropy 1}))]
+    (clean-ptr sampler
+               raw/wgpuSamplerRelease)
+    {:sampler sampler}))
 
-(defn ^:private clean-ptr
-  ([ptr f]
-   (clean-ptr ptr f nil))
-  ([ptr f refs]
-   (let [raw-ptr (Pointer/nativeValue ptr)
-         refs* (volatile! (set refs))]
-     (.register ^Cleaner @cleaner ptr
-                (fn []
-                  (f raw-ptr)
-                  (vreset! refs* nil)))
-     nil)) )
+
 
 (defn create-shader [ctx {:keys [src label]}]
   (let [chain (doto (WGPUChainedStruct.)
@@ -491,7 +518,7 @@
                                                (doto (PointerByReference.)
                                                  (.setValue command-buffer))))]
     
-    (vswap! refs identity)
+    (vreset! refs nil)
     nil))
 
 
@@ -640,6 +667,10 @@
 
         ;; 	queue.release();
         ]
+    (raw/wgpuCommandEncoderRelease encoder)
+    (raw/wgpuCommandBufferRelease command-buffer)
+    (raw/wgpuBufferRelease pixelBuffer)
+
     bs))
 
 (def texture-format raw/WGPUTextureFormat_RGBA8UnormSrgb)
@@ -923,10 +954,11 @@
                         (raw/map->WGPUCommandBufferDescriptor*
                          {:label (->memory "command_buffer")}))
 
-        _ (raw/wgpuCommandEncoderRelease command-encoder)
+
         _ (raw/wgpuQueueSubmit queue 1 (doto (PointerByReference.)
                                          (.setValue command-buffer)))
 
+        _ (raw/wgpuCommandEncoderRelease command-encoder)
         _ (raw/wgpuCommandBufferRelease command-buffer)
 
         buf (save-texture ctx targetTexture width height)
@@ -1152,10 +1184,12 @@
                         (raw/map->WGPUCommandBufferDescriptor*
                          {}))
 
-        _ (raw/wgpuCommandEncoderRelease command-encoder)
+
 
         _ (raw/wgpuQueueSubmit queue 1 (doto (PointerByReference.)
                                          (.setValue command-buffer)))
+
+        _ (raw/wgpuCommandEncoderRelease command-encoder)
         _ (raw/wgpuCommandBufferRelease command-buffer)]
     nil))
 
