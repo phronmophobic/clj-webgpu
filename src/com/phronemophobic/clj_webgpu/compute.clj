@@ -134,11 +134,6 @@
    :f32 4
    :f16 2})
 
-(defonce ^:private refs (atom #{}))
-(defn ^:private ref! [o]
-  (swap! refs conj o)
-  o)
-
 (defn ^:private ->memory [o]
   (case (.getCanonicalName ^Class (type o))
     "java.lang.String" (let [^String o o
@@ -384,10 +379,9 @@
                 (.writeField "sType" raw/WGPUSType_ShaderModuleWGSLDescriptor))
 
         ^WGPUShaderModuleWGSLDescriptorByReference
-        next-in-chain (ref!
-                       (doto (WGPUShaderModuleWGSLDescriptorByReference.)
-                         (.writeField "chain" chain)
-                         (.writeField "code" (->memory src))))
+        next-in-chain (doto (WGPUShaderModuleWGSLDescriptorByReference.)
+                        (.writeField "chain" chain)
+                        (.writeField "code" (->memory src)))
 
         descriptor
         (doto (WGPUShaderModuleDescriptorByReference.)
@@ -510,21 +504,20 @@
          (.releaseWritableTile img# 0 0)))))
 
 (defn ->buffered-image
-  [^Memory buf width height]
-  (let [
+  ([buf width height]
+   (->buffered-image (BufferedImage. width height BufferedImage/TYPE_4BYTE_ABGR) buf width height))
+  ([^BufferedImage img ^Memory buf width height]
+   (let [;; 4 bytes per pixel
+         linesize (* 4 width)
 
-        img (BufferedImage. width height BufferedImage/TYPE_4BYTE_ABGR)
-        ;; 4 bytes per pixel
-        linesize (* 4 width)
+         get-buf (fn [y] (.getByteArray buf (* linesize y) linesize))]
 
-        get-buf (fn [y] (.getByteArray buf (* linesize y) linesize))]
+     (with-tile [wraster img]
+       (doseq [y (range height)]
 
-    (with-tile [wraster img]
-      (doseq [y (range height)]
-
-        (.setDataElements wraster 0 y width 1
-                          (get-buf y))))
-    img))
+         (.setDataElements wraster 0 y width 1
+                           (get-buf y))))
+     img)))
 
 (defn save-png [bufimg f]
   (with-open [os (clojure.java.io/output-stream f)]
@@ -991,7 +984,7 @@
                           (.writeField "label" (->memory "command_buffer"))))
         _ (raw/wgpuQueueSubmit (:queue ctx) 1 (doto (PointerByReference.)
                                                 (.setValue command-buffer)))]
-    (vswap! refs identity)
+    (vreset! refs nil)
     nil))
 
 (defn -main [& args]
