@@ -33,6 +33,60 @@
     (identity mesh)
     buf))
 
+
+(defn vector-subtract
+  "Subtract vector v2 from v1."
+  [v1 v2]
+  (mapv - v1 v2))
+
+(defn cross-product
+  "Calculate the cross product of two vectors."
+  [v1 v2]
+  [(float (- (* (v1 1) (v2 2)) (* (v1 2) (v2 1))))
+   (float (- (* (v1 2) (v2 0)) (* (v1 0) (v2 2))))
+   (float (- (* (v1 0) (v2 1)) (* (v1 1) (v2 0))))])
+
+(defn normalize
+  "Normalize a vector."
+  [v]
+  (let [length (Math/sqrt (reduce + (map #(* % %) v)))]
+    (mapv #(/ % length) v)))
+
+(defn triangle-normal
+  "Calculate the normal of a triangle given its vertices."
+  [[v1 v2 v3]]
+  (let [edge1 (vector-subtract v2 v1)
+        edge2 (vector-subtract v3 v1)
+        normal (cross-product edge1 edge2)]
+    (normalize normal)))
+
+(defn mesh->normals2 [^manifold3d.pub.DoubleMesh mesh]
+  "Calculate normals for a sequence of triangles."
+  [mesh]
+  (let [pos (.vertPos mesh)
+        normals
+        (float-array
+         (eduction
+          (map (fn [^manifold3d.glm.IntegerVec3 idx]
+                 (eduction
+                  (map (fn [^manifold3d.glm.DoubleVec3 v]
+                         [(.x v)
+                          (.y v)
+                          (.z v)]))
+                  [(.get pos (.x idx))
+                   (.get pos (.y idx))
+                   (.get pos (.z idx))])))
+          (mapcat (fn [triangle]
+                    ;; use same normal for all verts
+                    (let [norm (triangle-normal triangle)]
+                      [norm norm norm])))
+          cat
+          (.triVerts mesh)))]
+    (identity pos)
+    normals))
+
+
+
 (defn mesh->normals [^manifold3d.pub.DoubleMesh mesh]
   (let [normals (.vertNormal mesh)
 
@@ -52,11 +106,7 @@
                 cat
                 cat
                 (.triVerts mesh)))
-              (float-array
-               (eduction
-                (map (fn [_]
-                       1.0))
-                (range (alength (mesh->verts mesh))))))]
+              (mesh->normals2 mesh))]
     (identity mesh)
     buf))
 
@@ -109,7 +159,10 @@
 (defn pipeline-3d [{:keys [vertex-shader
                            fragment-shader]}]
   {:primitive {:topology :TriangleList
-               :cullMode :Back}
+               ;; :cullMode :Front
+               :cullMode :Back
+               ;; :cullMode :None
+               }
    :vertex (merge
             {:entryPoint "vs_main"}
             vertex-shader)
@@ -235,17 +288,18 @@
   (let [width 640
         height 640
 
-        verts (mesh->verts mesh)
+        verts (if (instance? (class (float-array 0)) mesh)
+                mesh
+                (mesh->verts mesh))
 
         ctx (wgpu/create-context)
 
-        shader (wgpu/create-shader ctx {:src (slurp (io/file "shaders/draw-mesh.wgsl"))})
+        shader (wgpu/create-shader ctx {:src (slurp (io/resource "com/phronemophobic/clj_webgpu/shaders/model_lighting.wgsl"))})
         draw-figure-pipeline
         (wgpu/create-pipeline ctx
                               (pipeline-3d  {:fragment-shader {:module shader}
                                              :vertex-shader {:module shader}})
                               )
-
         offscreen-texture (wgpu/create-texture
                            ctx
                            {
@@ -297,12 +351,12 @@
         transform (mat/transpose
                    (mat/mmul
                     (perspective-fov (* 1/2 Math/PI) 1 0.1 20)
-                    (mtranslate 0 0 -2)                   
+                    (mtranslate 0 0 -1)
                     
                     model-mat))
 
-        light-mat (mat/mmul
-                   model-mat)
+        light-mat (do
+                    (apply mrotate rot))
 
 
         uni-matrix
@@ -334,15 +388,16 @@
 
         texture (wgpu/load-texture ctx (io/file
                                         "/Users/adrian/workspace/clj-media/Clojure_logo.png"))
+
         sampler (wgpu/create-sampler ctx)
-        
+
         buf1 (wgpu/create-buffer ctx {:usage #{:Storage :CopyDst}
                                       :type :f32
                                       :length (alength verts)})
         
         _ (wgpu/copy-to-buffer ctx buf1 verts)
 
-        normals (mesh->normals mesh)
+        normals (mesh->normals2 mesh)
         normal-buf (wgpu/create-buffer ctx {:usage #{:Storage :CopyDst}
                                             :type :f32
                                             :length (alength normals)})
@@ -352,7 +407,7 @@
         {
          :render-pass
          (render-pass-3d {:texture-view offscreen-texture-view
-                               :depth-texture-view depth-texture-view})
+                          :depth-texture-view depth-texture-view})
          
          :draws [{:vertex-count (/ (alength verts) 3)
                   :pipeline draw-figure-pipeline
@@ -365,7 +420,6 @@
                              uni2
                              ]}]
          }
-
 
         _ (wgpu/submit
            ctx
@@ -380,6 +434,7 @@
 
         buf (wgpu/save-texture ctx offscreen-texture width height)
         img (wgpu/->buffered-image  buf width height)]
+
     img)
   )
 
@@ -393,7 +448,7 @@
        :height 640}
       (eduction
        (map (fn [frameno]
-              (let [rot (* 0.5 Math/PI
+              (let [rot (* 0.5 4 Math/PI
                            (/ frameno num-frames))]
                   (ui/image
                    (draw-mesh mesh [rot (/ rot 2) (/ rot 4)] )))))
@@ -501,7 +556,7 @@
         verts (mesh->verts mesh)
         ctx (wgpu/create-context)
 
-        shader (wgpu/create-shader ctx {:src (slurp (io/file "shaders/draw-mesh.wgsl"))})
+        shader (wgpu/create-shader ctx {:src (slurp (io/resource "com/phronemophobic/clj_webgpu/shaders/model_lighting.wgsl"))})
         draw-figure-pipeline
         (wgpu/create-pipeline ctx
                               (pipeline-3d  {:fragment-shader {:module shader}
@@ -620,7 +675,6 @@
                     (ui/on
                      :key-press
                      (fn [s]
-                       (prn s)
                        (case s
                          "s" (vswap! user-mat* #(mat/mmul (mtranslate 0 0 -0.2)
                                                           %))
@@ -669,7 +723,11 @@
                  (eduction
                   cat
                   (mat/transpose
-                   model-mat)))
+                   (mrotate rot (/ rot 2) (/ rot 4))
+
+                   ;; scaling messes up normals
+                   ;;model-mat
+                   )))
                 _ (wgpu/copy-to-buffer ctx uni2 uni2-matrix)
 
                 _ (wgpu/submit
@@ -700,7 +758,13 @@
 (defn -main [& args]
   (java2d++ (->
              ;; (mf/cube 1 1 1)
-             (mf/sphere 3 100)
-             mf/get-mesh
-             ))
-  )
+             ;; (mf/sphere 3 100)
+
+             ;; (mf/text "/Library/Fonts/SF-Pro-Text-Regular.otf" "λ")
+             ;; (mf/scale-to-height 3)
+             ;; (mf/extrude 1)
+
+             ;; mf/get-mesh
+
+             (mf/import-mesh "/Users/adrian/Downloads/Klein_Smoother_no_base.STL")
+             )))

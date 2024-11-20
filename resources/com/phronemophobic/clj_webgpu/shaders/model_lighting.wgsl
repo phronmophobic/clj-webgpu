@@ -15,7 +15,8 @@ matrix: mat4x4f,
 struct OurVertexShaderOutput {
     @builtin(position) position: vec4f,
     @location(0) texcoord: vec2f,
-    @location(1) normal: vec3f,
+    // @location(1) normal: vec3f,
+    @location(1) light: f32,
 };
 
 @vertex
@@ -33,9 +34,20 @@ fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> OurVertexShaderOutput
 //vsOutput.position.w = 1.0;
 
     vsOutput.texcoord = originalPosition.xy;
-    vsOutput.normal = (uni2.matrix* vec4f( normals[i], normals[i+1], normals[i+2], 1.0)).xyz;
 
-    var a = uni2;
+    // temporary normalize for large mesh
+    vsOutput.texcoord = vsOutput.texcoord/10;
+
+    var normal = vec4f(normals[i], normals[i+1], normals[i+2], 1.0);
+    var normal2 = normalize( (uni2.matrix * normal).xyz);
+    
+    // normal = normalize((vec4f(normal,1.0) * uni2.matrix).xyz);
+
+    var light = dot(normal2, normalize(vec3f(1.0, 1.0, -1.0f)));
+    var lightRange = 0.9;
+
+    light = (1.0 - lightRange) + max(0.0, (lightRange * light));
+    vsOutput.light = light;
 
     return vsOutput;
 }
@@ -55,13 +67,10 @@ fn fs_main(fsInput: OurVertexShaderOutput) -> @location(0) vec4f {
         color = vec4f(1.0 , 1.0 , 1.0 , 1.0);
     }
 
-    let normal = normalize(fsInput.normal);
-    var light = dot(normal, normalize(vec3f(0.0, 0.0f, 1.0f)));
-    var lightRange = 0.9;
-    light = 1.0;
+    // let normal = normalize(fsInput.normal);
+    // var light = dot(normal, normalize(vec3f(1.0, 1.0, -1.0f)));
+    // var lightRange = 0.9;
 
-    // return vec4f(1.0, 1.0, 1.0, 0.5);
-
-    light = (1.0 - lightRange) + max(0.0, (lightRange * light));
-    return vec4f(color.rgb * light, 0.2);
+    // light = (1.0 - lightRange) + max(0.0, (lightRange * light));
+    return vec4f(color.rgb * fsInput.light, 1.0);
 }

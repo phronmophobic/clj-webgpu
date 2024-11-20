@@ -243,21 +243,7 @@ var outi = global_id.x*4u;
 
 
 
-(defn animate []
-  (let [num-frames 100]
-    (gif/save-gif!
-     (gif/graphics->media
-      java2d/draw-to-graphics
-      {:width 640
-       :height 640}
-      (eduction
-       (map (fn [frameno]
-              (println frameno)
-              (ui/image
-               (draw (double (* 2 (/ frameno num-frames)))))))
-       (range num-frames)))
-     "webgpu.gif"))
-  )
+
 
 (defn make-ctx []
   (let [verts monster-verts
@@ -284,14 +270,31 @@ var outi = global_id.x*4u;
         _ (gpu/copy-to-buffer ctx (:buf1 ctx) verts)]
     ctx))
 
+(defn animate []
+  (let [num-frames 100
+        ctx (make-ctx)]
+    (gif/save-gif!
+     (gif/graphics->media
+      java2d/draw-to-graphics
+      {:width 640
+       :height 640}
+      (eduction
+       (map (fn [frameno]
+              (println frameno)
+              (ui/image
+               (draw ctx (double (* 2 (/ frameno num-frames)))))))
+       (range num-frames)))
+     "webgpu.gif"))
+  )
+
 (comment
 
   (def ctx (make-ctx))
   )
 
 (defn -main [& args]
-  ;; (animate)
-  (let [num-frames 100
+   (animate)
+  #_(let [num-frames 100
         ;; verts cube-verts
         ctx (make-ctx)]
     (dotimes [i 20]
