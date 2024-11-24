@@ -30,7 +30,8 @@
               (let [rot (* 0.5 4 Math/PI
                            (/ frameno num-frames))]
                 (ui/image
-                 (d3/draw-mesh mesh [rot (/ rot 2) (/ rot 4)] )))))
+                 (-> (d3/draw-mesh mesh [rot (/ rot 2) (/ rot 4)] )
+                     (wgpu/->buffered-image))))))
        (range num-frames)))
      "webgpu.gif"))
   )
@@ -294,7 +295,8 @@
         )
      )
     #_(wgpu/save-png
-       (draw-mesh (mf/import-mesh fname))
+       (-> (draw-mesh (mf/import-mesh fname))
+           (wgpu/->buffered-image))
        "draw-mesh.png"))
 
   ,)

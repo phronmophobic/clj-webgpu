@@ -369,11 +369,8 @@
         ;; wait for queue to 
         _ (wgpu/poll (:device ctx) true)
 
-        buf (wgpu/save-texture ctx offscreen-texture width height)
-        img (wgpu/->buffered-image  buf width height)]
-
-    img)
-  )
+        buf (wgpu/save-texture ctx offscreen-texture width height)]
+    buf))
 
 
 
@@ -399,7 +396,8 @@
     (-> (mf/import-mesh "/Users/adrian/Downloads/36ee14ff-06a6-47e1-9601-cbd3daf2e491.glb")))
   (def verts (mesh->verts my-mesh))
   (wgpu/save-png
-   (draw-mesh my-mesh)
+   (-> (draw-mesh my-mesh)
+       wgpu/->buffered-image)
    "draw-mesh.png")
 
   (center-camera
