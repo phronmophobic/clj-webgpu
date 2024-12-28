@@ -20,7 +20,10 @@
                 org.clojars.cartesiantheatrics/manifold3d$macosx-arm64 {:local/root "/Users/adrian/workspace/manifold/bindings/java/target/manifold3d-1.0.39.jar" }
                 com.phronemophobic.cljonda/webgpu-native-darwin-aarch64 {:mvn/version "v0.19.4.1"}
                 com.phronemophobic/clogif {:mvn/version "1.4"}
-                com.phronemophobic/membrane {:mvn/version "0.14.4-beta"}}
+                com.phronemophobic/membrane {:mvn/version "0.14.4-beta"}
+                com.phronemophobic.membrane/skialib-macosx-aarch64 {:mvn/version "0.14-beta"
+                                                                    ;;:local/root "../membrane/csource/macos-aarch64"
+                                                                    }}
    :jvm-opts ["-Djava.library.path=/opt/local/lib"
               "-XX:+UnlockDiagnosticVMOptions"
               "-XX:+DebugNonSafepoints"
