@@ -551,7 +551,14 @@
     (ImageIO/write ^BufferedImage bufimg "png" os)))
 
 ;; https://github.com/eliemichel/LearnWebGPU-Code/blob/6f5e4cf1297b4f06a1e3659b0ecc1ab581709757/save_image.h#L240
-(defn save-texture [ctx texture width height]
+(defn save-texture
+  "Deprecated?
+  It seems like this returns a pointer to the memory region, but it also releases the buffer.
+  This seems bad.
+
+  see save-texture2
+  "
+  [ctx texture width height]
   (let [{:keys [device queue]} ctx
 
         ;; 	auto device = m_device;
@@ -627,6 +634,135 @@
 
         _ (raw/wgpuDevicePoll device 1  nil)
         bs (raw/wgpuBufferGetMappedRange pixelBuffer 0 pixelBuffer-size)
+        
+
+        ;; 	// Issue commands
+        ;; 	Queue queue = device.getQueue();
+        ;; 	CommandBuffer command = encoder.finish(Default);
+        ;; 	queue.submit(command);
+
+        ;; 	encoder.release();
+        ;; 	command.release();
+
+        ;; 	// Map buffer
+        ;; 	std::vector<uint8_t> pixels;
+        ;; 	bool done = false;
+        ;; 	bool failed = false;
+        ;; 	auto callbackHandle = pixelBuffer.mapAsync(MapMode::Read, 0, pixelBufferDesc.size, [&](BufferMapAsyncStatus status) {
+        ;; 		if (status != BufferMapAsyncStatus::Success) {
+        ;; 			failed = true;
+        ;; 			done = true;
+        ;; 			return;
+        ;; 		}
+        ;; 		unsigned char* pixelData = (unsigned char*)pixelBuffer.getConstMappedRange(0, pixelBufferDesc.size);
+        ;; 		int bytesPerRow = 4 * width;
+        ;; 		int success = stbi_write_png(path.string().c_str(), (int)width, (int)height, 4, pixelData, bytesPerRow);
+
+        ;; 		pixelBuffer.unmap();
+
+        ;; 		failed = success == 0;
+        ;; 		done = true;
+        ;; 	});
+
+        ;; 	// Wait for mapping
+        ;; 	while (!done) {
+        ;; #ifdef WEBGPU_BACKEND_WGPU
+        ;; 		wgpuQueueSubmit(queue, 0, nullptr);
+        ;; #else
+        ;; 		device.tick();
+        ;; #endif
+        ;; 	}
+
+        ;; 	queue.release();
+        ]
+    (raw/wgpuCommandEncoderRelease encoder)
+    (raw/wgpuCommandBufferRelease command-buffer)
+    (raw/wgpuBufferRelease pixelBuffer)
+
+    bs))
+
+(defn save-texture2 [ctx bs texture width height]
+  (let [{:keys [device queue]} ctx
+
+        ;; 	auto device = m_device;
+        ;; 	auto width = m_width;
+        ;; 	auto height = m_height;
+        ;; 	auto pixelBuffer = m_pixelBuffer;
+        ;; 	auto pixelBufferDesc = m_pixelBufferDesc;
+        encoder (raw/wgpuDeviceCreateCommandEncoder
+                 device
+                 (raw/map->WGPUCommandEncoderDescriptor*
+                  {:label (->memory "command_encoder")})
+                 )
+        ;; 	// Start encoding the commands
+        ;; 	CommandEncoder encoder = device.createCommandEncoder(Default);
+
+        source (raw/map->WGPUImageCopyTexture*
+                {:texture texture})
+        
+        pixelBuffer-size (* 4 width height)
+        pixelBuffer (raw/wgpuDeviceCreateBuffer
+                     device
+                     (raw/map->WGPUBufferDescriptor*
+                      {:usage (int
+                               (bit-or raw/WGPUBufferUsage_MapRead raw/WGPUBufferUsage_CopyDst))
+                       :size pixelBuffer-size
+                       :mappedAtCreation (int 0)}))
+        
+	;; BufferDescriptor pixelBufferDesc = Default;
+	;; pixelBufferDesc.mappedAtCreation = false;
+	;; pixelBufferDesc.usage = BufferUsage::MapRead | BufferUsage::CopyDst;
+	;; pixelBufferDesc.size = 4 * width * height;
+	;; Buffer pixelBuffer = device.createBuffer(pixelBufferDesc);
+
+        destination (raw/map->WGPUImageCopyBuffer*
+                     {:buffer pixelBuffer
+                      :layout
+                      (raw/map->WGPUTextureDataLayout
+                       {:bytesPerRow (int (* 4 width))
+                        :offset 0
+                        :rowsPerImage height})})
+        _ (raw/wgpuCommandEncoderCopyTextureToBuffer
+           encoder
+           source
+           destination
+           (raw/map->WGPUExtent3D*
+            {:width (int width)
+             :height (int height)
+             :depthOrArrayLayers (int 1)}))
+        ;; 	// Get pixels
+        ;; 	ImageCopyTexture source = Default;
+        ;; 	source.texture = texture;
+        ;; 	ImageCopyBuffer destination = Default;
+        ;; 	destination.buffer = pixelBuffer;
+        ;; 	destination.layout.bytesPerRow = 4 * width;
+        ;; 	destination.layout.offset = 0;
+        ;; 	destination.layout.rowsPerImage = height;
+        ;; 	encoder.copyTextureToBuffer(source, destination, { width, height, 1 });
+
+        queue (raw/wgpuDeviceGetQueue device)
+
+        command-buffer (raw/wgpuCommandEncoderFinish
+                        encoder
+                        (raw/map->WGPUCommandBufferDescriptor*
+                         {:label (->memory "command_buffer")}))
+        
+        _ (raw/wgpuQueueSubmit queue 1 (doto (PointerByReference.)
+                                         (.setValue command-buffer)))
+
+        _ (raw/wgpuBufferMapAsync pixelBuffer raw/WGPUMapMode_Read 0 pixelBuffer-size
+                                  (fn [status user-data]
+                                    #_(prn "buffer status" status))
+                                  nil)
+
+        _ (raw/wgpuDevicePoll device 1  nil)
+        bs-ptr (raw/wgpuBufferGetMappedRange pixelBuffer 0 pixelBuffer-size)
+        _ (System/arraycopy (.getByteArray bs-ptr 0 pixelBuffer-size)
+                            0
+                            bs
+                            0
+                            (alength bs))
+        
 
         ;; 	// Issue commands
         ;; 	Queue queue = device.getQueue();
