@@ -1,20 +1,31 @@
 (ns com.phronemophobic.clj-webgpu.compute
   (:require 
+   [membrane.skia :as skia]
    [com.phronemophobic.clj-webgpu.impl.raw :as raw]
+   [tech.v3.datatype.native-buffer :as native-buffer]
+   [com.phronemophobic.clong.gen.jna.insn :as gen.jna.insn]
+   [tech.v3.datatype.ffi :as dt-ffi]
+   [tech.v3.datatype :as dtype]
+   [tech.v3.datatype.struct :as dt-struct]
+   [membrane.ui :as ui]
+   tech.v3.resource
    [clojure.java.io :as io])
   (:import
+   (tech.v3.datatype.ffi Pointer)
+   com.phronemophobic.membrane.Skia
    java.io.PushbackReader
-   com.sun.jna.Memory
-   com.sun.jna.Pointer
-   com.sun.jna.ptr.PointerByReference
-   com.sun.jna.ptr.LongByReference
-   com.sun.jna.ptr.IntByReference
-   com.sun.jna.ptr.ByteByReference
-   com.sun.jna.Structure
-   java.awt.image.BufferedImage
-   javax.imageio.ImageIO
+   ;; com.sun.jna.Memory
+   ;; com.sun.jna.Pointer
+   ;; com.sun.jna.ptr.PointerByReference
+   ;; com.sun.jna.ptr.LongByReference
+   ;; com.sun.jna.ptr.IntByReference
+   ;; com.sun.jna.ptr.ByteByReference
+   ;; com.sun.jna.Structure
+   ;; java.awt.image.BufferedImage
+   ;; javax.imageio.ImageIO
    java.lang.ref.Cleaner
-   (com.phronemophobic.clj_webgpu.impl.raw.structs
+   java.util.Map
+   #_(com.phronemophobic.clj_webgpu.impl.raw.structs
     WGPUBindGroupLayoutEntryByReference
     WGPUShaderModuleDescriptorByReference
     WGPUShaderModuleWGSLDescriptorByReference
@@ -30,14 +41,28 @@
   (:gen-class))
 
 
+
+
 (defonce ^:private cleaner
   (delay (Cleaner/create)))
 
 (defn ^:private clean-ptr
-  ([ptr f]
+  ([^Pointer ptr f]
    (clean-ptr ptr f nil))
-  ([ptr f refs]
-   (let [raw-ptr (Pointer/nativeValue ptr)
+  ([^Pointer ptr f refs]
+   (tap> ptr)
+   (let [address (.address ptr)
+         refs* (volatile! (set refs))]
+     (tech.v3.resource/track ptr
+                             {:track-type :gc
+                              :dispose-fn
+                              (fn []
+                                
+                                (f (Pointer/new address))
+                                (vreset! refs* nil))})
+     ptr)
+   
+   #_(let [raw-ptr (Pointer/nativeValue ptr)
          refs* (volatile! (set refs))]
      (.register ^Cleaner @cleaner ptr
                 (fn []
@@ -45,7 +70,7 @@
                   (vreset! refs* nil)))
      nil)) )
 
-(defn ^:private write-field [^Structure o field val]
+#_(defn ^:private write-field [^Structure o field val]
   (.writeField o field val)
   o)
 
@@ -75,27 +100,10 @@
    m
    kw-f-pairs))
 
-(defmacro defenum [var-name private-name enum]
-  `(do
-     (let [soffset# (inc (count ~enum))
-           m# (into {}
-                    (comp
-                     (keep (fn [{:keys [~'enum ~'name ~'value]}]
-                             (when (= ~'enum ~enum)
-                               [(keyword (subs ~'name soffset#))
-                                ~'value]))))
-                    (:enums raw/api))]
-      (defn ~(with-meta private-name {:private true})
-        [kw#]
-        (if-let [v# (get m# kw#)]
-          v#
-          (throw (ex-info "Unknown enum"
-                          {:kw kw#}))
-          ))
-      (def ~var-name
-        ~(str "Possible " var-name)
-        (into #{} (keys m#)))))
-  )
+
+(comment
+  (kw->color-write-mask :All)
+  ,)
 
 (defn ^:private camel-to-kebab-case
   "Converts camelCase string to kebab-case."
@@ -105,15 +113,47 @@
        (clojure.string/join "-")))
 
 
-(defmacro defenums []
-  `(do
-     ~@(eduction
+(defmacro defenum [;;var-name private-name enum
+                   enum-name
+                   enum-vals
+                   ]
+  
+  )
 
-        (map (fn [enum]
-               (let [enum-name (subs (:enum enum) 4)
-                     kb (camel-to-kebab-case enum-name)]
-                `(defenum ~(symbol (str kb "s")) ~(symbol (str "kw->" kb)) ~(:enum enum)))))
-        (:enums raw/api))))
+
+(defmacro defenums []
+  
+  (let [enums (->> (concat (:enums raw/api)
+                           (->> (:flags raw/api)
+                                (map (fn [{:keys [flag] :as m}]
+                                       (assoc m :enum flag)))))
+                   (group-by :enum)
+                   (map (fn [[enum-group-name enum-vals]]
+                          [enum-group-name (into {}
+                                                 (comp
+                                                  (map (fn [{:keys [name] :as m}]
+                                                         (assoc m :short-name (subs name (inc (count enum-group-name))) )))
+                                                  (map (fn [{:keys [short-name value]}]
+                                                         [(keyword short-name) value])))
+
+                                                 enum-vals)])))]
+    ;; shape is {enum-group-name {enum-kw enum-val}}
+
+    `(do
+      ~@(eduction
+         (map (fn [[full-enum-name enum-vals]]
+                (let [enum-group-name (subs full-enum-name 4)
+                      private-name (symbol (str "kw->" (camel-to-kebab-case enum-group-name)))]
+                  
+                  `(defn ~(with-meta private-name {:private true})
+                     [~'kw]
+                     (if-let [v# (get ~enum-vals ~'kw)]
+                       v#
+                       (throw (ex-info "Unknown enum"
+                                       {:kw ~'kw
+                                        :enum ~enum-group-name})))))))
+         enums))))
+
 (defenums)
 
 
@@ -123,7 +163,7 @@
   usage-flags
   {:CopyDst raw/WGPUBufferUsage_CopyDst
    :CopySrc  raw/WGPUBufferUsage_CopySrc 
-   :Force32 raw/WGPUBufferUsage_Force32
+   ;; :Force32 raw/WGPUBufferUsage_Force32
    :Index  raw/WGPUBufferUsage_Index 
    :Indirect raw/WGPUBufferUsage_Indirect
    :MapRead  raw/WGPUBufferUsage_MapRead 
@@ -146,52 +186,103 @@
    :f32 4
    :f16 2})
 
+
 (defn ^:private ->memory [o]
   (case (.getCanonicalName ^Class (type o))
-    "java.lang.String" (let [^String o o
+    "java.lang.String" 
+    (dt-ffi/string->c o)
+    #_(let [^String o o
                              buf (.getBytes o "utf-8")
                              len (alength buf)]
                          (doto (Memory. (inc len))
                            (.write 0 buf 0 len)
                            (.setByte len 0)))
 
-    "byte[]" (let [^bytes o o]
+    "byte[]" 
+    (dtype/copy!
+     o
+     (native-buffer/malloc (alength o)))
+    #_(let [^bytes o o]
                (doto (Memory. (alength o))
                  (.write 0 o 0 (alength o))))))
 
 
-(defonce ^:private
+
+(defn ->wgpu-string-view [s]
+  (let [data (dt-ffi/string->c s)]
+    (tech.v3.resource/track
+     (raw/map->WGPUStringView
+      {:data (.address (dt-ffi/->pointer data))
+       :length (dec (native-buffer/native-buffer-byte-len data))})
+     {:dispose-fn (constantly data)})))
+
+(comment
+  (require '[clj-java-decompiler.core :refer [decompile disassemble]])
+ (clj-java-decompiler.core/decompile-form
+  {:decompiler :bytecode}
+  (dt-ffi/define-foreign-interface 
+                    :void
+                    [:int32
+                     :pointer
+                     '(by-value :WGPUStringView)
+                     :pointer
+                     :pointer]))
+  ,)
+
+(def ctx* nil)
+(def
+  #_defonce ^:private
   ctx*
   (delay
     (let [instance (raw/wgpuCreateInstance nil)
+
+          _ (tap> :hi)
           _ (clean-ptr instance
                        raw/wgpuInstanceRelease)
+          ;; adapter* (promise)
+          
+
           adapter* (promise)
           _ (raw/wgpuInstanceRequestAdapter instance
                                             nil
-                                            (fn [status adapter message user-date]
-                                              (deliver adapter* adapter))
-                                            nil)
+                                            (raw/map->WGPURequestAdapterCallbackInfo
+                                             {:callback 
+                                              (raw/callback-maker
+                                               :void
+                                               [:int32
+                                                :pointer
+                                                (by-value :WGPUStringView)
+                                                :pointer
+                                                :pointer]
+                                               (fn [status adapter message user1 user2]
+                                                 (deliver adapter* 
+                                                          (Pointer. 
+                                                           (com.sun.jna.Pointer/nativeValue adapter)))))})
+                                            )
+
           _ (clean-ptr @adapter*
                        raw/wgpuAdapterRelease)
 
-          supported-limits (raw/map->WGPUSupportedLimits* {} )
-          _ (raw/wgpuAdapterGetLimits @adapter*
-                                      supported-limits)
+          ;; supported-limits (raw/map->WGPUSupportedLimits* {} )
+          ;; _ (raw/wgpuAdapterGetLimits @adapter*
+          ;;                             supported-limits)
 
           device* (promise)
           _ (raw/wgpuAdapterRequestDevice @adapter*
                                           nil
-                                          #_(raw/map->WGPUDeviceDescriptor*
-                                             {:requiredLimits
-                                              (raw/map->WGPURequiredLimits*
-                                               {:limits 
-                                                (raw/map->WGPULimits
-                                                 (assoc (into {} (:limits supported-limits))
-                                                        :maxTextureDimension2D 1000))})})
-                                          (fn [status device message user-data]
-                                            (deliver device* device))
-                                          nil)
+                                          (raw/map->WGPURequestDeviceCallbackInfo
+                                           {:callback
+                                            (raw/callback-maker
+                                             :void
+                                             [:int32
+                                              :pointer
+                                              (by-value :WGPUStringView)
+                                              :pointer :pointer]
+                                             (fn [status device message user1 user2]
+                                               (deliver device* 
+                                                        (Pointer. 
+                                                           (com.sun.jna.Pointer/nativeValue device)))
+                                               ))}))
           _ (clean-ptr @device*
                        raw/wgpuDeviceRelease
                        [instance])
@@ -205,6 +296,10 @@
        :device @device*
        :queue queue})))
 
+(comment
+  @ctx*
+  ,)
+
 (defn create-context []
   ;; Recreating ctxs seems to eventually crash,
   ;; even with proper releasing.
@@ -212,18 +307,22 @@
 
 (defn create-buffer [ctx {:keys [label usage length type mapped-at-creation?] :as m}]
   (let [size (* length (get buffer-type-sizes type))
-        descriptor (doto (WGPUBufferDescriptorByReference.)
+        _ (tap> {:size size})
+        descriptor (raw/map->WGPUBufferDescriptor
+                    {:size size})
+        #_(doto (WGPUBufferDescriptorByReference.)
                      (.writeField "size" size))
         
         descriptor (cond-> descriptor
-                     mapped-at-creation? (write-field "mappedAtCreation" (int 1))
-                     usage (write-field "usage"
-                                        (int (reduce
-                                              (fn [flags kw]
-                                                (bit-or flags (get usage-flags kw)))
-                                              0
-                                              usage)))
-                     label (write-field "label" (->memory label)))
+                     mapped-at-creation? (doto (Map/.put :mappedAtCreation (int 1)))
+                     usage (doto (Map/.put :usage (int (reduce
+                                                 (fn [flags kw]
+                                                   (bit-or flags (get usage-flags kw)))
+                                                 0
+                                                 usage))))
+                     label (doto (Map/.put :label (->wgpu-string-view label))))
+        _ (prn descriptor)
+        _ (flush)
         buffer (raw/wgpuDeviceCreateBuffer (:device ctx) descriptor)]
     (clean-ptr buffer
                raw/wgpuBufferRelease)
@@ -232,7 +331,28 @@
      {:buffer buffer
       :size size})))
 
-(defn load-image
+(defn membrane-as-native-buffer
+  "Loads an image (eg. png) and returns a native buffer in rgba8888 format."
+  [view]
+  (let [[w h] (ui/bounds view)
+        n-bytes (* 4 w h)
+        buf (native-buffer/malloc n-bytes)
+        skia-resource
+        (com.sun.jna.Pointer.
+         (.address
+          (raw/skia_direct_buffer buf
+                                  skia/kRGBA_8888_SkColorType
+                                  w h (* 4 w))))]
+    
+    (try
+      (binding [skia/*skia-resource* skia-resource
+                skia/*already-drawing* true]
+        (skia/draw view))
+      buf
+      (finally
+        (Skia/skia_cleanup skia-resource )))))
+
+#_(defn load-image
   "`src` can be any value supported by clojure.java.io/input-stream."
   ^BufferedImage [src]
   (with-open [is (clojure.java.io/input-stream src)]
@@ -240,7 +360,7 @@
           buffered-image (ImageIO/read image-stream)]
       buffered-image)))
 
-(defn load-texture [{:keys [device queue] :as ctx} src]
+(defn load-texture [{:keys [device queue] :as ctx} view]
   ;;   int width, height, channels;
   ;; unsigned char *pixelData = stbi_load(path.string().c_str(), &width, &height, &channels, 4 /* force 4 channels */);
   ;; if (nullptr == pixelData) return nullptr;
@@ -258,23 +378,24 @@
   ;; WGPUTexture texture = wgpuDeviceCreateTexture(device, &textureDesc);
 
   (let [ ;; get pixel data
-        img (load-image src)
-        pixel-data (-> img
-                       (.getData)
-                       ^java.awt.image.DataBufferByte
-                       (.getDataBuffer)
-                       (.getData))
-        width (.getWidth img)
-        height (.getHeight img)
+        [width height] (ui/bounds view)
+        buf (membrane-as-native-buffer view)
+        ;; pixel-data (-> img
+        ;;                (.getData)
+        ;;                ^java.awt.image.DataBufferByte
+        ;;                (.getDataBuffer)
+        ;;                (.getData))
+        ;; width (.getWidth img)
+        ;; height (.getHeight img)
 
         ;; still needs help from shader
         ;; to convert to raw/WGPUTextureFormat_RGBA8Unorm
-        _ (assert (= BufferedImage/TYPE_4BYTE_ABGR (.getType img)))
+        ;; _ (assert (= BufferedImage/TYPE_4BYTE_ABGR (.getType img)))
         texture-size (raw/map->WGPUExtent3D
                       {:width width
                        :height height
                        :depthOrArrayLayers 1})
-        textureDesc (raw/map->WGPUTextureDescriptor*
+        textureDesc (raw/map->WGPUTextureDescriptor
                      {:dimension raw/WGPUTextureDimension_2D
                       :size texture-size
                       :format raw/WGPUTextureFormat_RGBA8Unorm
@@ -308,8 +429,8 @@
         ;;     wgpuQueueWriteTexture(queue, destination, pixelData, 4 * textureSize.width * textureSize.height, source, textureSize);
         ;;     wgpuQueueRelease(queue);
         ;; }
-        destination (raw/map->WGPUImageCopyTexture*
-                     {:texture texture
+        destination (raw/map->WGPUTexelCopyTextureInfo
+                     {:texture (.address texture)
                       :mipLevel 0
                       :origin (raw/map->WGPUOrigin3D
                                {:x 0
@@ -317,31 +438,36 @@
                                 :z 0})
                       :aspect raw/WGPUTextureAspect_All})
 
-        source (raw/map->WGPUTextureDataLayout*
-                {:offset 0
-                 :bytesPerRow (* 4 width)
-                 :rowsPerImage height})
+        data-layout (raw/map->WGPUTexelCopyBufferLayout
+                     {:offset 0
+                      :bytesPerRow (* 4 width)
+                      :rowsPerImage height})
 
         ;; convert from ABGR to RGBA
-        _ (doseq [i (range (* width height))
-                  :let [idx (* 4 i)
-                        a (aget pixel-data (+ idx 0))
-                        b (aget pixel-data (+ idx 1))
-                        g (aget pixel-data (+ idx 2))
-                        r (aget pixel-data (+ idx 3))]]
-            (aset pixel-data (+ idx 0) r)
-            (aset pixel-data (+ idx 1) g)
-            (aset pixel-data (+ idx 2) b)
-            (aset pixel-data (+ idx 3) a))
+        ;; _ (doseq [i (range (* width height))
+        ;;           :let [idx (* 4 i)
+        ;;                 a (aget pixel-data (+ idx 0))
+        ;;                 b (aget pixel-data (+ idx 1))
+        ;;                 g (aget pixel-data (+ idx 2))
+        ;;                 r (aget pixel-data (+ idx 3))]]
+        ;;     (aset pixel-data (+ idx 0) r)
+        ;;     (aset pixel-data (+ idx 1) g)
+        ;;     (aset pixel-data (+ idx 2) b)
+        ;;     (aset pixel-data (+ idx 3) a))
 
-        pixel-buf (doto (Memory. (alength pixel-data))
-                    (.write 0 pixel-data 0 (alength pixel-data)))
+        ;; pixel-buf (doto (Memory. (alength pixel-data))
+        ;;             (.write 0 pixel-data 0 (alength pixel-data)))
 
-        texture-size* (raw/map->WGPUExtent3D*
+        texture-size* (raw/map->WGPUExtent3D
                        {:width width
                         :height height
                         :depthOrArrayLayers 1})
-        _ (raw/wgpuQueueWriteTexture queue destination pixel-data (alength pixel-data) source texture-size*)
+        _ (raw/wgpuQueueWriteTexture queue 
+                                     destination
+                                     (dt-ffi/->pointer buf)
+                                     (native-buffer/native-buffer-byte-len buf)
+                                     data-layout
+                                     texture-size*)
 
         ;; TextureViewDescriptor textureViewDesc;
         ;; textureViewDesc.aspect = WGPUTextureAspect_All;
@@ -354,7 +480,7 @@
         ;; *pTextureView = wgpuTextureCreateView(texture, &textureViewDesc);
         texture-view (raw/wgpuTextureCreateView
                       texture
-                      (raw/map->WGPUTextureViewDescriptor*
+                      (raw/map->WGPUTextureViewDescriptor
                        {:aspect raw/WGPUTextureAspect_All
                         :baseArrayLayer 0
                         :arrayLayerCount 1
@@ -365,7 +491,14 @@
         _ (clean-ptr texture-view
                      raw/wgpuTextureViewRelease)]
     {:texture texture
+     :buf buf
      :texture-view texture-view}))
+
+(comment
+  (load-texture (create-context)
+                (ui/label "hello world!"))
+  
+  ,)
 
 (defn create-sampler [ctx]
   (let [
@@ -383,7 +516,7 @@
 	;; Sampler sampler = device.createSampler(samplerDesc);
         sampler (raw/wgpuDeviceCreateSampler
                  (:device ctx)
-                 (raw/map->WGPUSamplerDescriptor*
+                 (raw/map->WGPUSamplerDescriptor
                   {
                    :addressModeU raw/WGPUAddressMode_Repeat
                    :addressModeV raw/WGPUAddressMode_Repeat
@@ -401,43 +534,98 @@
 
 
 
+
+
+
 (defn create-shader [ctx {:keys [src label]}]
-  (let [chain (doto (WGPUChainedStruct.)
+  (let [chain 
+        (raw/map->WGPUChainedStruct
+         {:sType raw/WGPUSType_ShaderSourceWGSL})
+        #_(doto (WGPUChainedStruct.)
                 (.writeField "sType" raw/WGPUSType_ShaderModuleWGSLDescriptor))
 
-        ^WGPUShaderModuleWGSLDescriptorByReference
-        next-in-chain (doto (WGPUShaderModuleWGSLDescriptorByReference.)
+        ;; ^WGPUShaderModuleWGSLDescriptorByReference
+        next-in-chain
+        (raw/map->WGPUShaderSourceWGSL
+         {:chain chain
+          :code (->wgpu-string-view src)})
+        #_(doto (WGPUShaderModuleWGSLDescriptorByReference.)
                         (.writeField "chain" chain)
                         (.writeField "code" (->memory src)))
+        
+
 
         descriptor
-        (doto (WGPUShaderModuleDescriptorByReference.)
+        (raw/map->WGPUShaderModuleDescriptor
+         (merge
+          {:nextInChain (.address (dt-ffi/->pointer next-in-chain))}
+          (when label
+            {:label (->wgpu-string-view label)})))
+        #_(doto (WGPUShaderModuleDescriptorByReference.)
           (.writeField "nextInChain" (.getPointer next-in-chain)))
 
-        descriptor (cond-> descriptor
-                     label (write-field "label" (->memory label)))
+        ;; descriptor (cond-> descriptor
+        ;;              label (write-field "label" (->memory label)))
+        
 
         shader (raw/wgpuDeviceCreateShaderModule (:device ctx)
                                                  descriptor)]
     (assert shader)
     ;; I'm not sure this is required, but the purpose
     ;; is to prevent the unlikely gc of these before the shader is created.
-    (identity [chain descriptor])
+    (identity [chain next-in-chain descriptor])
     (clean-ptr shader raw/wgpuShaderModuleRelease)
 
     shader))
 
+
+(def shaderSource
+  "
+@vertex
+fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> @builtin(position) vec4<f32> {
+	var p = vec2f(0.0, 0.0);
+	if (in_vertex_index == 0u) {
+		p = vec2f(-0.5, -0.5);
+	} else if (in_vertex_index == 1u) {
+		p = vec2f(0.5, -0.5);
+	} else {
+		p = vec2f(0.0, 0.5);
+	}
+	return vec4f(p, 0.0, 1.0);
+}
+
+@fragment
+fn fs_main() -> @location(0) vec4f {
+ return vec4f(0.0, 0.4, 1.0, 1.0);
+}
+")
+
+
+(comment
+  (create-shader (create-context) 
+                 {:src shaderSource
+                  :label""})
+  ,)
+
+
+
 (defn copy-to-buffer [ctx buffer data]
-  (let [mem (Memory. (:size buffer))]
-    (case (:type buffer)
+  (let [;; mem (Memory. (:size buffer))
+        ]
+    #_(case (:type buffer)
       :i32 (let [^ints data data] (.write mem 0 data 0 (alength data)))
       :u32 (let [^ints data data] (.write mem 0 data 0 (alength data)))
       :f32 (let [^floats data data] (.write mem 0 data 0 (alength data)))
       ;; :f16
       )
-    (raw/wgpuQueueWriteBuffer (:queue ctx) (:buffer buffer) 0 mem (.size mem))))
+    (raw/wgpuQueueWriteBuffer (:queue ctx) (:buffer buffer) 
+                              0
+                              data
+                              (native-buffer/native-buffer-byte-len data)
+                              ;;mem (.size mem)
+                              )))
 
-(defn compute [ctx {:keys [entry-point
+#_(defn compute [ctx {:keys [entry-point
                            shader
                            group
                            bindings
@@ -522,7 +710,7 @@
     nil))
 
 
-(defmacro with-tile [[tile-bind img] & body]
+#_(defmacro with-tile [[tile-bind img] & body]
   `(let [img# ~img
          ~tile-bind (.getWritableTile img# 0 0)]
      (try
@@ -530,7 +718,7 @@
        (finally
          (.releaseWritableTile img# 0 0)))))
 
-(defn ->buffered-image
+#_(defn ->buffered-image
   ([buf width height]
    (->buffered-image (BufferedImage. width height BufferedImage/TYPE_4BYTE_ABGR) buf width height))
   ([^BufferedImage img ^Memory buf width height]
@@ -546,12 +734,12 @@
                            (get-buf y))))
      img)))
 
-(defn save-png [bufimg f]
+#_(defn save-png [bufimg f]
   (with-open [os (clojure.java.io/output-stream f)]
     (ImageIO/write ^BufferedImage bufimg "png" os)))
 
 ;; https://github.com/eliemichel/LearnWebGPU-Code/blob/6f5e4cf1297b4f06a1e3659b0ecc1ab581709757/save_image.h#L240
-(defn save-texture
+#_(defn save-texture
   "Deprecated?
   It seems like this returns a pointer to the memory region, but it also releases the buffer.
   This seems bad.
@@ -681,136 +869,167 @@
 
     bs))
 
-(defn save-texture2 [ctx bs texture width height]
-  (let [{:keys [device queue]} ctx
+(defn save-texture2
+  "Copy texture into native-buffer, `buf`.
+  
+  If buf is nil, then one will be allocated.
+  
+  returns buf."
+  ([ctx buf texture width height]
+   (let [{:keys [device queue]} ctx
+         
+         refs (volatile! [])
+         ref! (fn [o]
+                (vswap! refs conj o)
+                o)
+         ->address (fn [o]
+                     
+                     (-> o ref! dt-ffi/->pointer dt-ffi/pointer->address)) 
 
-        ;; 	auto device = m_device;
-        ;; 	auto width = m_width;
-        ;; 	auto height = m_height;
-        ;; 	auto pixelBuffer = m_pixelBuffer;
-        ;; 	auto pixelBufferDesc = m_pixelBufferDesc;
-        encoder (raw/wgpuDeviceCreateCommandEncoder
-                 device
-                 (raw/map->WGPUCommandEncoderDescriptor*
-                  {:label (->memory "command_encoder")})
-                 )
-        ;; 	// Start encoding the commands
-        ;; 	CommandEncoder encoder = device.createCommandEncoder(Default);
+         ;; 	auto device = m_device;
+         ;; 	auto width = m_width;
+         ;; 	auto height = m_height;
+         ;; 	auto pixelBuffer = m_pixelBuffer;
+         ;; 	auto pixelBufferDesc = m_pixelBufferDesc;
+         encoder (raw/wgpuDeviceCreateCommandEncoder
+                  device
+                  (raw/map->WGPUCommandEncoderDescriptor
+                   {:label (->wgpu-string-view "command_encoder")})
+                  )
+         ;; 	// Start encoding the commands
+         ;; 	CommandEncoder encoder = device.createCommandEncoder(Default);
+         
+         source (raw/map->WGPUTexelCopyTextureInfo
+                 {:texture (->address texture)})
+         
+         pixelBuffer-size (* 4 width height)
+         pixelBuffer (raw/wgpuDeviceCreateBuffer
+                      device
+                      (raw/map->WGPUBufferDescriptor
+                       {:usage (int
+                                (bit-or raw/WGPUBufferUsage_MapRead raw/WGPUBufferUsage_CopyDst))
+                        :size pixelBuffer-size
+                        :mappedAtCreation (int 0)}))
+         
+         	;; BufferDescriptor pixelBufferDesc = Default;
+         	;; pixelBufferDesc.mappedAtCreation = false;
+         	;; pixelBufferDesc.usage = BufferUsage::MapRead | BufferUsage::CopyDst;
+         	;; pixelBufferDesc.size = 4 * width * height;
+         	;; Buffer pixelBuffer = device.createBuffer(pixelBufferDesc);
+         
+         destination (raw/map->WGPUTexelCopyBufferInfo
+                      {:buffer (->address pixelBuffer)
+                       :layout
+                       (raw/map->WGPUTexelCopyBufferLayout
+                        {:bytesPerRow (int (* 4 width))
+                         :offset 0
+                         :rowsPerImage height})})
+         _ (raw/wgpuCommandEncoderCopyTextureToBuffer
+            encoder
+            source
+            destination
+            (raw/map->WGPUExtent3D
+             {:width (int width)
+              :height (int height)
+              :depthOrArrayLayers (int 1)}))
+         ;; 	// Get pixels
+         ;; 	ImageCopyTexture source = Default;
+         ;; 	source.texture = texture;
+         ;; 	ImageCopyBuffer destination = Default;
+         ;; 	destination.buffer = pixelBuffer;
+         ;; 	destination.layout.bytesPerRow = 4 * width;
+         ;; 	destination.layout.offset = 0;
+         ;; 	destination.layout.rowsPerImage = height;
+         ;; 	encoder.copyTextureToBuffer(source, destination, { width, height, 1 });
+         
+         queue (raw/wgpuDeviceGetQueue device)
+         
+         command-buffer (raw/wgpuCommandEncoderFinish
+                         encoder
+                         (raw/map->WGPUCommandBufferDescriptor
+                          {:label (->wgpu-string-view "command_buffer")}))
+         
+         _ (raw/wgpuQueueSubmit queue 1 
+                                (dt-ffi/make-ptr :pointer (->address command-buffer))
+                                #_(doto (PointerByReference.)
+                                    (.setValue command-buffer)))
+         
+         _ (raw/wgpuBufferMapAsync pixelBuffer raw/WGPUMapMode_Read 0 pixelBuffer-size
+                                   (raw/map->WGPUBufferMapCallbackInfo
+                                    {:callback 
+                                     (raw/callback-maker
+                                      :void
+                                      [:int32
+                                       (by-value :WGPUStringView)
+                                       :pointer
+                                       :pointer]
+                                      (fn [status message user1 user2]
+                                        (prn "buffer status" (raw/wgpu-string-view->string (.toStruct message)))))}))
+         
+         _ (raw/wgpuDevicePoll device 1  nil)
+         bs-ptr (raw/wgpuBufferGetMappedRange pixelBuffer 0 pixelBuffer-size)
+         
+         buf (or buf
+                 (native-buffer/malloc pixelBuffer-size))
+         _ (dtype/copy! (native-buffer/wrap-address (->address bs-ptr) pixelBuffer-size)
+                        buf)
+         
+         ;; _ (System/arraycopy (.getByteArray bs-ptr 0 pixelBuffer-size)
+         ;;                     0
+         ;;                     bs
+         ;;                     0
+         ;;                     (alength bs))
+         
+         
+         ;; 	// Issue commands
+         ;; 	Queue queue = device.getQueue();
+         ;; 	CommandBuffer command = encoder.finish(Default);
+         ;; 	queue.submit(command);
+         
+         ;; 	encoder.release();
+         ;; 	command.release();
+         
+         ;; 	// Map buffer
+         ;; 	std::vector<uint8_t> pixels;
+         ;; 	bool done = false;
+         ;; 	bool failed = false;
+         ;; 	auto callbackHandle = pixelBuffer.mapAsync(MapMode::Read, 0, pixelBufferDesc.size, [&](BufferMapAsyncStatus status) {
+         ;; 		if (status != BufferMapAsyncStatus::Success) {
+         ;; 			failed = true;
+         ;; 			done = true;
+         ;; 			return;
+         ;; 		}
+         ;; 		unsigned char* pixelData = (unsigned char*)pixelBuffer.getConstMappedRange(0, pixelBufferDesc.size);
+         ;; 		int bytesPerRow = 4 * width;
+         ;; 		int success = stbi_write_png(path.string().c_str(), (int)width, (int)height, 4, pixelData, bytesPerRow);
+         
+         ;; 		pixelBuffer.unmap();
+         
+         ;; 		failed = success == 0;
+         ;; 		done = true;
+         ;; 	});
+         
+         ;; 	// Wait for mapping
+         ;; 	while (!done) {
+         ;; #ifdef WEBGPU_BACKEND_WGPU
+         ;; 		wgpuQueueSubmit(queue, 0, nullptr);
+         ;; #else
+         ;; 		device.tick();
+         ;; #endif
+         ;; 	}
+         
+         ;; 	queue.release();
+         ]
+     (raw/wgpuCommandEncoderRelease encoder)
+     (raw/wgpuCommandBufferRelease command-buffer)
+     (raw/wgpuBufferRelease pixelBuffer)
+     
+     (vreset! refs nil)
 
-        source (raw/map->WGPUImageCopyTexture*
-                {:texture texture})
-        
-        pixelBuffer-size (* 4 width height)
-        pixelBuffer (raw/wgpuDeviceCreateBuffer
-                     device
-                     (raw/map->WGPUBufferDescriptor*
-                      {:usage (int
-                               (bit-or raw/WGPUBufferUsage_MapRead raw/WGPUBufferUsage_CopyDst))
-                       :size pixelBuffer-size
-                       :mappedAtCreation (int 0)}))
-        
-	;; BufferDescriptor pixelBufferDesc = Default;
-	;; pixelBufferDesc.mappedAtCreation = false;
-	;; pixelBufferDesc.usage = BufferUsage::MapRead | BufferUsage::CopyDst;
-	;; pixelBufferDesc.size = 4 * width * height;
-	;; Buffer pixelBuffer = device.createBuffer(pixelBufferDesc);
+     buf)))
 
-        destination (raw/map->WGPUImageCopyBuffer*
-                     {:buffer pixelBuffer
-                      :layout
-                      (raw/map->WGPUTextureDataLayout
-                       {:bytesPerRow (int (* 4 width))
-                        :offset 0
-                        :rowsPerImage height})})
-        _ (raw/wgpuCommandEncoderCopyTextureToBuffer
-           encoder
-           source
-           destination
-           (raw/map->WGPUExtent3D*
-            {:width (int width)
-             :height (int height)
-             :depthOrArrayLayers (int 1)}))
-        ;; 	// Get pixels
-        ;; 	ImageCopyTexture source = Default;
-        ;; 	source.texture = texture;
-        ;; 	ImageCopyBuffer destination = Default;
-        ;; 	destination.buffer = pixelBuffer;
-        ;; 	destination.layout.bytesPerRow = 4 * width;
-        ;; 	destination.layout.offset = 0;
-        ;; 	destination.layout.rowsPerImage = height;
-        ;; 	encoder.copyTextureToBuffer(source, destination, { width, height, 1 });
-
-        queue (raw/wgpuDeviceGetQueue device)
-
-        command-buffer (raw/wgpuCommandEncoderFinish
-                        encoder
-                        (raw/map->WGPUCommandBufferDescriptor*
-                         {:label (->memory "command_buffer")}))
-        
-        _ (raw/wgpuQueueSubmit queue 1 (doto (PointerByReference.)
-                                         (.setValue command-buffer)))
-
-        _ (raw/wgpuBufferMapAsync pixelBuffer raw/WGPUMapMode_Read 0 pixelBuffer-size
-                                  (fn [status user-data]
-                                    #_(prn "buffer status" status))
-                                  nil)
-
-        _ (raw/wgpuDevicePoll device 1  nil)
-        bs-ptr (raw/wgpuBufferGetMappedRange pixelBuffer 0 pixelBuffer-size)
-        _ (System/arraycopy (.getByteArray bs-ptr 0 pixelBuffer-size)
-                            0
-                            bs
-                            0
-                            (alength bs))
-        
-
-        ;; 	// Issue commands
-        ;; 	Queue queue = device.getQueue();
-        ;; 	CommandBuffer command = encoder.finish(Default);
-        ;; 	queue.submit(command);
-
-        ;; 	encoder.release();
-        ;; 	command.release();
-
-        ;; 	// Map buffer
-        ;; 	std::vector<uint8_t> pixels;
-        ;; 	bool done = false;
-        ;; 	bool failed = false;
-        ;; 	auto callbackHandle = pixelBuffer.mapAsync(MapMode::Read, 0, pixelBufferDesc.size, [&](BufferMapAsyncStatus status) {
-        ;; 		if (status != BufferMapAsyncStatus::Success) {
-        ;; 			failed = true;
-        ;; 			done = true;
-        ;; 			return;
-        ;; 		}
-        ;; 		unsigned char* pixelData = (unsigned char*)pixelBuffer.getConstMappedRange(0, pixelBufferDesc.size);
-        ;; 		int bytesPerRow = 4 * width;
-        ;; 		int success = stbi_write_png(path.string().c_str(), (int)width, (int)height, 4, pixelData, bytesPerRow);
-
-        ;; 		pixelBuffer.unmap();
-
-        ;; 		failed = success == 0;
-        ;; 		done = true;
-        ;; 	});
-
-        ;; 	// Wait for mapping
-        ;; 	while (!done) {
-        ;; #ifdef WEBGPU_BACKEND_WGPU
-        ;; 		wgpuQueueSubmit(queue, 0, nullptr);
-        ;; #else
-        ;; 		device.tick();
-        ;; #endif
-        ;; 	}
-
-        ;; 	queue.release();
-        ]
-    (raw/wgpuCommandEncoderRelease encoder)
-    (raw/wgpuCommandBufferRelease command-buffer)
-    (raw/wgpuBufferRelease pixelBuffer)
-
-    bs))
-
-(def texture-format raw/WGPUTextureFormat_RGBA8UnormSrgb)
-(defn render [ctx {:keys [vertex-entry-point
+#_(def texture-format raw/WGPUTextureFormat_RGBA8UnormSrgb)
+#_(defn render [ctx {:keys [vertex-entry-point
                           fragment-entry-point
                           shader
                           bindings
@@ -1112,7 +1331,7 @@
 
     buf-img))
 
-(defn copy-from-buffer [ctx buffer]
+#_(defn copy-from-buffer [ctx buffer]
   (raw/wgpuBufferMapAsync (:buffer buffer) raw/WGPUMapMode_Read 0 (:size buffer)
                           (fn [status user-data]
                             nil)
@@ -1124,7 +1343,7 @@
       :u32 (.getIntArray ret 0 (:length buffer))
       :f32 (.getFloatArray ret 0 (:length buffer)))))
 
-(defn copy [ctx from to]
+#_(defn copy [ctx from to]
   (let [refs (volatile! #{})
         ref! (fn [o]
                (vswap! refs conj o)
@@ -1155,10 +1374,7 @@
     (vreset! refs nil)
     nil))
 
-(defn -main [& args]
-  (prn (create-buffer (create-context)
-                      {:size 10
-                       :usage #{:MapRead :CopyDst}})))
+
 
 
 (defn create-texture
@@ -1180,7 +1396,7 @@
   (let [texture-descriptor
         (convert-kws
          texture-descriptor
-         [[:label ->memory]
+         [[:label ->wgpu-string-view]
           [:size raw/map->WGPUExtent3D]
           [:dimension kw->texture-dimension]
           [:format kw->texture-format]
@@ -1192,22 +1408,23 @@
 
         texture (raw/wgpuDeviceCreateTexture
                  (:device ctx)
-                 (raw/map->WGPUTextureDescriptor* texture-descriptor))]
+                 (raw/map->WGPUTextureDescriptor texture-descriptor))]
     (clean-ptr texture raw/wgpuTextureRelease)
     texture))
+
 
 (defn create-texture-view [texture texture-view-descriptor]
   (let [texture-view-descriptor
         (convert-kws
          texture-view-descriptor
-         [[:label ->memory]
+         [[:label ->wgpu-string-view]
           [:aspect kw->texture-aspect]
           [:format kw->texture-format]
           [:dimension kw->texture-dimension]])
 
         texture-view (raw/wgpuTextureCreateView
                       texture
-                      (raw/map->WGPUTextureViewDescriptor*
+                      (raw/map->WGPUTextureViewDescriptor
                        texture-view-descriptor))
         ]
     (clean-ptr texture-view raw/wgpuTextureViewRelease [texture])
@@ -1216,70 +1433,93 @@
 (defn poll [device wait?]
   (raw/wgpuDevicePoll device (if wait? 1 0)  nil))
 
+(raw/map->WGPUBindGroupEntry)
 
 (defn create-bind-group [device bind-group-layout bindings]
-  (let [entries (raw/struct-array
-                 :clong/WGPUBindGroupEntry
+  (let [->address #(-> % dt-ffi/->pointer dt-ffi/pointer->address)
+        entries (raw/struct-array
+                 :WGPUBindGroupEntry
                  (into []
                        (map-indexed
                         (fn [i binding]
                           (cond
                             (:buffer binding)
                             {:binding i
-                             :buffer (:buffer binding)
+                             :buffer (->address (:buffer binding))
                              :offset 0
                              :size (:size binding)}
 
                             (:texture-view binding)
                             {:binding i
-                             :textureView (:texture-view binding)}
+                             :textureView (->address (:texture-view binding))}
 
                             (:sampler binding)
                             {:binding i
-                             :sampler (:sampler binding)}
+                             :sampler (->address (:sampler binding))}
 
                             :else (throw (ex-info "Unknown buffer type"
                                                   {:binding binding})))))
                        bindings))
+        
 
         bind-group (raw/wgpuDeviceCreateBindGroup
                     device
-                    (raw/map->WGPUBindGroupDescriptor*
-                     {:layout bind-group-layout
+                    (raw/map->WGPUBindGroupDescriptor
+                     {:layout (->address bind-group-layout)
                       :entryCount (count bindings)
-                      :entries entries}
+                      :entries (-> entries dt-ffi/->pointer dt-ffi/pointer->address)}
                      ))]
+    (identity entries
+               )
     (clean-ptr bind-group raw/wgpuBindGroupRelease)
     bind-group))
 
-(defn encode-compute-pass [ctx command-encoder pass])
+
+
+(defn encode-compute-pass [ctx command-encoder pass]
+  (throw (ex-info "Not implemented yet." {})))
 (defn encode-render-pass [ctx command-encoder pass]
   (let [draws (:draws pass)
         pass (:render-pass pass)
 
+        refs (volatile! [])
+        ref! (fn [o]
+               (vswap! refs conj o)
+               o)
+
+        ->pointer (fn [o]
+                    (ref!
+                     (-> o
+                         dt-ffi/->pointer
+                         dt-ffi/pointer->address)))
+
         render-pass (raw/wgpuCommandEncoderBeginRenderPass
                      command-encoder
-                     (raw/map->WGPURenderPassDescriptor*
+                     (raw/map->WGPURenderPassDescriptor
                       (merge
                        pass
                        {:colorAttachmentCount (count (:colorAttachments pass))
                         :colorAttachments
-                        (raw/struct-array
-                         :clong/WGPURenderPassColorAttachment
-                         (into []
-                               (map (fn [color-attachment]
-                                      (convert-kws
-                                       color-attachment
-                                       [[:loadOp kw->load-op]
-                                        [:storeOp kw->store-op]
-                                        [:clearValue raw/map->WGPUColor]])))
-                               (:colorAttachments pass)))
+                        (->pointer 
+                         (raw/struct-array
+                          :WGPURenderPassColorAttachment
+                          (into []
+                                (map (fn [color-attachment]
+                                       (convert-kws
+                                        color-attachment
+                                        [[:loadOp kw->load-op]
+                                         [:storeOp kw->store-op]
+                                         [:view ->pointer]
+                                         [:clearValue raw/map->WGPUColor]])))
+                                (:colorAttachments pass))))
                         :depthStencilAttachment
-                        (raw/map->WGPURenderPassDepthStencilAttachment*
-                         (convert-kws
-                          (:depthStencilAttachment pass)
-                          [[:depthLoadOp kw->load-op]
-                           [:depthStoreOp kw->store-op]]))})))]
+                        (->pointer
+                         (raw/map->WGPURenderPassDepthStencilAttachment
+                          (convert-kws
+                           (:depthStencilAttachment pass)
+                           [[:depthLoadOp kw->load-op]
+                            [:view ->pointer]
+                            [:depthStoreOp kw->store-op]])))})))]
     (doseq [draw draws]
       (let [pipeline (:pipeline draw)
             group 0]
@@ -1291,6 +1531,7 @@
         (raw/wgpuRenderPassEncoderDraw  render-pass (:vertex-count draw) (:instance-count draw 1) (:first-instance draw 0) (:first-vertex draw 0))))
     (raw/wgpuRenderPassEncoderEnd render-pass)
     (raw/wgpuRenderPassEncoderRelease render-pass)
+    (vreset! refs nil)
     nil))
 
 (defn submit [ctx passes]
@@ -1301,7 +1542,7 @@
 
         command-encoder (raw/wgpuDeviceCreateCommandEncoder
                          device
-                         (raw/map->WGPUCommandEncoderDescriptor*
+                         (raw/map->WGPUCommandEncoderDescriptor
                           {}))
 
         _ (doseq [pass passes]
@@ -1317,12 +1558,18 @@
 
         command-buffer (raw/wgpuCommandEncoderFinish
                         command-encoder
-                        (raw/map->WGPUCommandBufferDescriptor*
+                        (raw/map->WGPUCommandBufferDescriptor
                          {}))
 
 
+        
 
-        _ (raw/wgpuQueueSubmit queue 1 (doto (PointerByReference.)
+        _ (raw/wgpuQueueSubmit queue 1 
+                               (dt-ffi/make-ptr :pointer 
+                                                (-> command-buffer
+                                                    dt-ffi/pointer->address))
+                                   
+                               #_(doto (PointerByReference.)
                                          (.setValue command-buffer)))
 
         _ (raw/wgpuCommandEncoderRelease command-encoder)
@@ -1337,12 +1584,24 @@
 
 (defn create-pipeline [ctx pipeline-descriptor]
   (let [
+        refs (volatile! [] )
+        ref! (fn [o] 
+               (vswap! refs conj o)
+               o)
+        struct->pointer (fn [s]
+                          (-> s
+                              ref!
+                              dt-ffi/->pointer
+                              dt-ffi/pointer->address))
+
         ;; convert strings to Memory for some key paths
         pipeline-descriptor
         (convert-kws
          pipeline-descriptor
-         [[[:vertex :entryPoint] ->memory]
-          [[:fragment :entryPoint] ->memory]])
+         [[[:vertex :entryPoint] ->wgpu-string-view]
+          [[:vertex :module] struct->pointer]
+          [[:fragment :entryPoint] ->wgpu-string-view]
+          [[:fragment :module] struct->pointer]])
 
         ->stencil (fn [m]
                     (raw/map->WGPUStencilFaceState
@@ -1362,30 +1621,35 @@
 
         ->blend-state
         (fn [m]
-          (raw/map->WGPUBlendState*
-           (convert-kws m
-                        [[:color ->blend-component]
-                         [:alpha ->blend-component]])))
+          (struct->pointer
+           (raw/map->WGPUBlendState
+                         (convert-kws m
+                                      [[:color ->blend-component]
+                                       [:alpha ->blend-component]]))))
+
+        
 
         pipeline-descriptor
         (update pipeline-descriptor
                 :fragment
                 (fn [fragment]
-                  (merge
-                   fragment
-                   {:targets (raw/struct-array
-                              :clong/WGPUColorTargetState
-                              (into []
-                                    (map (fn [target]
-                                           (convert-kws target
-                                                        [[:format kw->texture-format]
-                                                         [:blend ->blend-state]
-                                                         [:writeMask kw->color-write-mask]])))
-                                    (:targets fragment)))
-                    :targetCount (count (:targets fragment))})))
+                  (let [targets (ref!
+                                 (raw/struct-array
+                                  :WGPUColorTargetState
+                                  (into []
+                                        (map (fn [target]
+                                               (convert-kws target
+                                                            [[:format kw->texture-format]
+                                                             [:blend ->blend-state]
+                                                             [:writeMask kw->color-write-mask]])))
+                                        (:targets fragment))))]
+                    (merge
+                     fragment
+                     {:targets (-> targets dt-ffi/->pointer dt-ffi/pointer->address)
+                      :targetCount (count (:targets fragment))}))))
 
         descriptor*
-        (raw/map->WGPURenderPipelineDescriptor*
+        (raw/map->WGPURenderPipelineDescriptor
          {:vertex (raw/map->WGPUVertexState
                    (:vertex pipeline-descriptor))
           :primitive
@@ -1395,16 +1659,17 @@
             [[:topology kw->primitive-topology]
              [:cullMode kw->cull-mode]]))
           :depthStencil
-          (raw/map->WGPUDepthStencilState*
-             (convert-kws
-              (:depthStencil pipeline-descriptor)
-              [[:depthCompare kw->compare-function]
-               [:format kw->texture-format]
-               [:stencilBack ->stencil]
-               [:stencilFront ->stencil]]))
+          (struct->pointer
+           (raw/map->WGPUDepthStencilState
+            (convert-kws
+             (:depthStencil pipeline-descriptor)
+             [[:depthCompare kw->compare-function]
+              [:format kw->texture-format]
+              [:stencilBack ->stencil]
+              [:stencilFront ->stencil]])))
           :fragment
-          (raw/map->WGPUFragmentState*
-           (:fragment pipeline-descriptor))
+          (struct->pointer (raw/map->WGPUFragmentState
+           (:fragment pipeline-descriptor)))
           :multisample
           (raw/map->WGPUMultisampleState
            (:multisample pipeline-descriptor))
@@ -1412,8 +1677,8 @@
         pipeline (raw/wgpuDeviceCreateRenderPipeline (:device ctx) descriptor*)
 
         ;; hang onto shader modules
-        refs (volatile! (set [(get-in pipeline-descriptor [:vertex :module])
-                              (get-in pipeline-descriptor [:fragment :module])]))]
+        _ (ref! [(get-in pipeline-descriptor [:vertex :module])
+                 (get-in pipeline-descriptor [:fragment :module])])]
     (assert pipeline)
     (clean-ptr pipeline
                (fn [p]
@@ -1423,3 +1688,40 @@
 
 
 
+;; create a direct resource
+;; draw to resource
+;; inspect bytes?
+
+;; (skia/defc skia_direct_bgra8888_buffer skialib com.sun.jna.Pointer [buf width height row-bytes])
+;; ./easel/src/com/phronemophobic/easel/browser.clj:  (skia_direct_bgra8888_buffer buf (int width) (int height) (int row-bytes)))
+
+
+
+
+
+
+
+
+
+
+(defn -main [& args]
+  
+  ;; (prn (create-shader (create-context)
+  ;;                     {:src shaderSource}))
+  ;; (prn (create-shader (create-context)
+  ;;                     {:src ""}))
+  
+  (prn (load-texture
+        (create-context)
+        (ui/filled-rectangle [1 0 0] 10 10)))
+
+  #_(prn (create-buffer (create-context)
+                      {:length 10
+                       :type :i32
+                       :usage #{:MapRead :CopyDst}})))
+
+;; (def aos (dt-struct/new-array-of-structs
+;;           :WGPUColorTargetState
+;;           3
+;;           ))
+;; (Map/.put (first aos) :format 1)

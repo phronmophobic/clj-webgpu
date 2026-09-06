@@ -43,7 +43,7 @@ fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> OurVertexShaderOutput
     
     // normal = normalize((vec4f(normal,1.0) * uni2.matrix).xyz);
 
-    var light = dot(normal2, normalize(vec3f(1.0, 1.0, -1.0f)));
+    var light = dot(normal2, normalize(vec3f(1.0, 1.0, 1.0f)));
     var lightRange = 0.9;
 
     light = (1.0 - lightRange) + max(0.0, (lightRange * light));

@@ -4,32 +4,49 @@
             [clj-manifold3d.core :as mf]
             [clojure.math :as math]
             [clojure.java.io :as io]
+
+            
+            [tech.v3.datatype :as dtype]
+            [tech.v3.datatype.struct :as dt-struct]
+            [tech.v3.datatype.ffi :as dt-ffi]
+            [tech.v3.datatype.native-buffer :as native-buffer]
+
             [com.phronemophobic.clogif :as gif]
             [membrane.ui :as ui]
+            [membrane.skia :as skia]
             [com.phronemophobic.clj-webgpu.compute :as wgpu])
-  (:import [manifold3d.glm DoubleVec3 DoubleVec2 DoubleMat4x3 DoubleMat3x2 IntegerVec4Vector DoubleMat4x3Vector
+  (:import [manifold3d.linalg DoubleVec3 DoubleVec2 IntegerVec4Vector 
             DoubleVec3Vector DoubleVec4Vector IntegerVec3Vector IntegerVec3 MatrixTransforms DoubleVec4]
-           java.awt.image.BufferedImage)
+           ;;java.awt.image.BufferedImage
+           )
   (:gen-class))
 
 
-(defn mesh->verts [^manifold3d.pub.DoubleMesh mesh]
-  (let [pos (.vertPos mesh)
+(defn mesh->verts [mesh]
+  (let [pos (.vertProperties mesh)
         buf (float-array
              (eduction
-              (map (fn [^manifold3d.glm.IntegerVec3 idx]
-                     (eduction
-                      (map (fn [^manifold3d.glm.DoubleVec3 v]
-                             [(.x v)
-                              (.y v)
-                              (.z v)]))
-                      [(.get pos (.x idx))
-                       (.get pos (.y idx))
-                       (.get pos (.z idx))])))
+              ;; (map (fn [ idx]
+              ;;        (eduction
+              ;;         (map (fn [v]
+              ;;                [(.x v)
+              ;;                 (.y v)
+              ;;                 (.z v)]))
+              ;;         [(.get pos (.x idx))
+              ;;          (.get pos (.y idx))
+              ;;          (.get pos (.z idx))])))
 
-              cat
-              cat
-              (.triVerts mesh)))]
+              ;; cat
+              ;; cat
+
+              
+              (mapcat (fn [i]
+                        (eduction
+                         (map (fn [j]
+                                (.get pos (+ (* i 3)
+                                             j))))
+                         (range 3))))
+              (.toIntArray (.triVerts mesh))))]
     (identity mesh)
     buf))
 
@@ -41,53 +58,75 @@
         normal (mat/cross edge1 edge2)]
     (mat/normalise normal)))
 
-(defn mesh->normals2 [^manifold3d.pub.DoubleMesh mesh]
+
+
+(defn mesh->normals2 [mesh]
   "Calculate normals for a sequence of triangles."
   [mesh]
-  (let [pos (.vertPos mesh)
+  (let [pos (.vertProperties mesh)
         normals
         (float-array
          (eduction
-          (map (fn [^manifold3d.glm.IntegerVec3 idx]
-                 (eduction
-                  (map (fn [^manifold3d.glm.DoubleVec3 v]
-                         [(.x v)
-                          (.y v)
-                          (.z v)]))
-                  [(.get pos (.x idx))
-                   (.get pos (.y idx))
-                   (.get pos (.z idx))])))
+          #_(map #(.get pos %))
+          (mapcat (fn [i]
+                    (eduction
+                     (map (fn [j]
+                            (.get pos (+ (* i 3)
+                                         j))))
+                     (range 3))))
+          (partition-all 3)
+          (partition-all 3)
+          ;; off by one error sometimes?
+          ;; not sure whose fault it is
+          (filter #(= 3 (count %)))
           (mapcat (fn [triangle]
-                    ;; use same normal for all verts
                     (let [norm (triangle-normal triangle)]
                       [norm norm norm])))
           cat
-          (.triVerts mesh)))]
+          (.toIntArray (.triVerts mesh)))
+         #_(eduction
+            (map (fn [idx]
+                   (eduction
+                    (map (fn [v]
+                           [(.x v)
+                            (.y v)
+                            (.z v)]))
+                    [(.get pos (.x idx))
+                     (.get pos (.y idx))
+                     (.get pos (.z idx))])))
+            (mapcat (fn [triangle]
+                      ;; use same normal for all verts
+                      (let [norm (triangle-normal triangle)]
+                        [norm norm norm])))
+            cat
+            (.triVerts mesh)))]
     (identity pos)
+    (identity mesh)
     normals))
 
 
+(defn mesh->normals [mesh]
+  (let [ ;; normals (.vertNormal mesh)
 
-(defn mesh->normals [^manifold3d.pub.DoubleMesh mesh]
-  (let [normals (.vertNormal mesh)
+        ;; buf (if (seq normals)
+        ;;       (float-array
+        ;;        (eduction
+        ;;         (map (fn [ idx]
+        ;;                (eduction
+        ;;                 (map (fn [ v]
+        ;;                        [(.x v)
+        ;;                         (.y v)
+        ;;                         (.z v)]))
+        ;;                 [(.get normals (.x idx))
+        ;;                  (.get normals (.y idx))
+        ;;                  (.get normals (.z idx))])))
 
-        buf (if (seq normals)
-              (float-array
-               (eduction
-                (map (fn [^manifold3d.glm.IntegerVec3 idx]
-                       (eduction
-                        (map (fn [^manifold3d.glm.DoubleVec3 v]
-                               [(.x v)
-                                (.y v)
-                                (.z v)]))
-                        [(.get normals (.x idx))
-                         (.get normals (.y idx))
-                         (.get normals (.z idx))])))
-
-                cat
-                cat
-                (.triVerts mesh)))
-              (mesh->normals2 mesh))]
+        ;;         cat
+        ;;         cat
+        ;;         (.triVerts mesh)))
+        ;;       (mesh->normals2 mesh))
+        buf (mesh->normals2 mesh)
+        ]
     (identity mesh)
     buf))
 
@@ -147,7 +186,7 @@
    :colorAttachments
    [{:view texture-view
      :loadOp :Clear
-     :resolveTarget nil
+     :resolveTarget 0
      :storeOp :Store
      :clearValue {:r 0.9
                   :g 0.1
@@ -240,7 +279,7 @@
         offscreen-texture (wgpu/create-texture
                            ctx
                            {
-                            :dimension :2D
+                            :dimension :3D
                             :size {:width width
                                    :height height
                                    :depthOrArrayLayers 1}
@@ -297,8 +336,13 @@
 
 
         uni-matrix
-        (float-array
-         (eduction
+        (dtype/make-container :native-heap
+                              :float32 
+                              (into []
+                                    cat
+                                    transform))
+        #_(float-array
+           (eduction
           cat
           transform))
 
@@ -310,7 +354,14 @@
         _ (wgpu/copy-to-buffer ctx uni uni-matrix)
 
         uni2-matrix
-        (float-array
+        (dtype/make-container :native-heap
+                              :float32
+                              (into []
+                                    cat
+                                    (mat/transpose
+                                     light-mat)))
+
+        #_(float-array
          (eduction
           cat
           (mat/transpose
@@ -323,8 +374,7 @@
 
         _ (wgpu/copy-to-buffer ctx uni2 uni2-matrix)
 
-        texture (wgpu/load-texture ctx (io/file
-                                        "/Users/adrian/workspace/clj-media/Clojure_logo.png"))
+        texture (wgpu/load-texture ctx (ui/image "/Users/adrian/workspace/clj-media/Clojure_logo.png"))
 
         sampler (wgpu/create-sampler ctx)
 
@@ -332,14 +382,15 @@
                                       :type :f32
                                       :length (alength verts)})
         
-        _ (wgpu/copy-to-buffer ctx buf1 verts)
+        
+
+        _ (wgpu/copy-to-buffer ctx buf1 (dtype/make-container :native-heap :float32 verts))
 
         normals (mesh->normals2 mesh)
         normal-buf (wgpu/create-buffer ctx {:usage #{:Storage :CopyDst}
                                             :type :f32
                                             :length (alength normals)})
-        _ (wgpu/copy-to-buffer ctx normal-buf normals)
-
+        _ (wgpu/copy-to-buffer ctx normal-buf (dtype/make-container :native-heap :float32 normals))
         draw-figure
         {
          :render-pass
@@ -357,6 +408,8 @@
                              uni2
                              ]}]
          }
+        _ (do (prn "submitting...")
+              (flush))
 
         _ (wgpu/submit
            ctx
@@ -365,11 +418,15 @@
 
             draw-figure
             ])
+        _ (do (prn "we submitted!")
+              (flush)) 
 
         ;; wait for queue to 
         _ (wgpu/poll (:device ctx) true)
+        _ (do (prn "now save the texture...")
+              (flush))
 
-        buf (wgpu/save-texture ctx offscreen-texture width height)]
+        buf (wgpu/save-texture2 ctx nil offscreen-texture width height)]
     buf))
 
 
@@ -429,5 +486,21 @@
 
 
 
+
+
+(comment
+  (def my-mesh (mf/import-mesh "/Users/adrian/Downloads/Klein_Smoother_no_base.STL"))
+  (animate my-mesh)
+  ,)
+(defn -main [& args]
+  (let [mesh (mf/import-mesh "/Users/adrian/Downloads/36ee14ff-06a6-47e1-9601-cbd3daf2e491.glb")]
+    
+    (let [native-buf (draw-mesh mesh [45 45 45  ])
+          [w h] [640 640]
+          buf (byte-array (native-buffer/native-buffer-byte-len native-buf))
+          _ (dtype/copy! native-buf buf)
+          pm (skia/pixmap 0 buf w h  skia/kRGBA_8888_SkColorType skia/kUnpremul_SkAlphaType (* w 4))]
+      (skia/save-image "doesitwork2.png" pm))
+    (prn "done")))
 
 

@@ -4,8 +4,9 @@
         com.phronemophobic/clong {;; :mvn/version "1.4.2"
                                   :local/root "../clong"
                                   }
-        org.clojars.cartesiantheatrics/clj-manifold3d {:mvn/version "0.1.0"}
+        org.clojars.cartesiantheatrics/clj-manifold3d {:mvn/version "1.1.1"}
         com.rpl/specter {:mvn/version "1.1.4"}
+        cnuernber/dtype-next {:mvn/version "11.026"}
 
         net.mikera/core.matrix {:mvn/version "0.63.0"}
         net.mikera/vectorz-clj {:mvn/version "0.48.0"}}
@@ -17,7 +18,11 @@
 
   :project
   {:extra-deps {org.bytedeco/llvm-platform {:mvn/version "16.0.4-1.5.9"}
-                org.clojars.cartesiantheatrics/manifold3d$macosx-arm64 {:local/root "/Users/adrian/workspace/manifold/bindings/java/target/manifold3d-1.0.39.jar" }
+                org.clojars.cartesiantheatrics/manifold3d$macosx-arm64
+                {;; :local/root "/Users/adrian/workspace/manifold/bindings/java/target/manifold3d-1.0.39.jar"
+                 ;; :local/root "/Users/adrian/Downloads/mf/manifold3d-2.1.0-mac-Array-aarch64.jar"
+                 :local/root "/Users/adrian/Downloads/mf2/manifold3d-2.1.0-mac-Array-aarch64.jar"
+                 }
                 com.phronemophobic.cljonda/webgpu-native-darwin-aarch64 {:mvn/version "v0.19.4.1"}
                 com.phronemophobic/clogif {:mvn/version "1.4"}
                 com.phronemophobic/membrane {:mvn/version "0.14.4-beta"}
