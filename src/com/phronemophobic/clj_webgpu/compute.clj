@@ -306,7 +306,8 @@
   @ctx*)
 
 (defn create-buffer [ctx {:keys [label usage length type mapped-at-creation?] :as m}]
-  (let [size (* length (get buffer-type-sizes type))
+  (let [;; size is in bytes
+        size (* length (get buffer-type-sizes type))
         _ (tap> {:size size})
         descriptor (raw/map->WGPUBufferDescriptor
                     {:size size})
@@ -625,114 +626,25 @@ fn fs_main() -> @location(0) vec4f {
                               ;;mem (.size mem)
                               )))
 
-#_(defn compute [ctx {:keys [entry-point
-                           shader
-                           group
-                           bindings
-                           workgroups]}]
-  (let [entry-point (or entry-point "main")
-        group (int (or group 0))
-        device (:device ctx)
-
-        ;; I'm not sure this is required, but the purpose
-        ;; is to prevent the unlikely gc of these before the shader is created.
-        refs (volatile! #{})
-        ref! (fn [o]
-               (vswap! refs conj o)
-               o)
-
-        compute-pipeline-descriptor
-        (ref!
-         (doto (WGPUComputePipelineDescriptorByReference.)
-           (.writeField "label" (->memory "compute_pipeline"))
-           (.writeField "compute"
-                        (doto (WGPUProgrammableStageDescriptor.)
-                          (.writeField "module" shader)
-                          (.writeField "entryPoint" (->memory entry-point))))))
-
-        compute-pipeline (raw/wgpuDeviceCreateComputePipeline
-                          device
-                          compute-pipeline-descriptor)
-
-        bind-group-layout (raw/wgpuComputePipelineGetBindGroupLayout compute-pipeline group)
-
-        ^objects
-        entries-arr (ref!
-                     (.toArray (WGPUBindGroupEntryByReference.) (count bindings)))
-        _ (doseq [[i buffer] (map-indexed vector bindings)]
-            (let [^WGPUBindGroupEntryByReference
-                  entry (aget entries-arr i)]
-              (doto entry
-                (.writeField "binding" (int i))
-                (.writeField "buffer" (:buffer buffer))
-                (.writeField "offset" 0)
-                (.writeField "size" (:size buffer)))))
-
-        bind-group (raw/wgpuDeviceCreateBindGroup
-                    device
-                    (ref!
-                     (doto (WGPUBindGroupDescriptorByReference.)
-                       (.writeField "label" (->memory "bind_group"))
-                       (.writeField "layout" bind-group-layout)
-                       (.writeField "entryCount" (long (alength entries-arr)))
-                       (.writeField "entries" (aget entries-arr 0)))))
-
-        command-encoder (raw/wgpuDeviceCreateCommandEncoder
-                         device
-                         (ref!
-                          (doto (WGPUCommandEncoderDescriptorByReference.)
-                            (.writeField "label" (->memory "command_encoder")))))
-
-        compute-pass-encoder (raw/wgpuCommandEncoderBeginComputePass
-                              command-encoder
-                              (ref!
-                               (doto (WGPUComputePassDescriptorByReference.)
-                                 (.writeField "label" (->memory "compute_pass")))))
-        _ (raw/wgpuComputePassEncoderSetPipeline compute-pass-encoder compute-pipeline)
-
-        _ (raw/wgpuComputePassEncoderSetBindGroup compute-pass-encoder group bind-group 0 nil)
-
-        _ (raw/wgpuComputePassEncoderDispatchWorkgroups compute-pass-encoder (:x workgroups 1) (:y workgroups 1) (:z workgroups 1))
-
-        _ (raw/wgpuComputePassEncoderEnd compute-pass-encoder)
-
-        command-buffer (raw/wgpuCommandEncoderFinish
-                        command-encoder
-                        (ref!
-                         (doto (WGPUCommandBufferDescriptorByReference.)
-                           (.writeField "label" (->memory "command_buffer")))))
-
-        _ (raw/wgpuQueueSubmit (:queue ctx) 1 (ref!
-                                               (doto (PointerByReference.)
-                                                 (.setValue command-buffer))))]
-    
-    (vreset! refs nil)
-    nil))
+(defn create-compute-pipeline [ctx {:keys [entry-point shader]}]
+  (raw/with-refs
+   (let [entry-point (or entry-point "main") 
+         
+         compute-pipeline-descriptor
+         (raw/map->WGPUComputePipelineDescriptor
+          {:label (raw/->wgpu-string-view "compute_pipeline")
+           :compute (raw/map->WGPUComputeState
+                     {:module (->address shader)
+                      :entryPoint (raw/->wgpu-string-view entry-point)})})]
+     (tech.v3.resource/track
+      (raw/wgpuDeviceCreateComputePipeline
+       (:device ctx)
+       (-> compute-pipeline-descriptor
+           dt-ffi/->pointer))
+      {:dispose-fn (fn []
+                     (vreset! refs nil  ))}))))
 
 
-#_(defmacro with-tile [[tile-bind img] & body]
-  `(let [img# ~img
-         ~tile-bind (.getWritableTile img# 0 0)]
-     (try
-       ~@body
-       (finally
-         (.releaseWritableTile img# 0 0)))))
-
-#_(defn ->buffered-image
-  ([buf width height]
-   (->buffered-image (BufferedImage. width height BufferedImage/TYPE_4BYTE_ABGR) buf width height))
-  ([^BufferedImage img ^Memory buf width height]
-   (let [;; 4 bytes per pixel
-         linesize (* 4 width)
-
-         get-buf (fn [y] (.getByteArray buf (* linesize y) linesize))]
-
-     (with-tile [wraster img]
-       (doseq [y (range height)]
-
-         (.setDataElements wraster 0 y width 1
-                           (get-buf y))))
-     img)))
 
 #_(defn save-png [bufimg f]
   (with-open [os (clojure.java.io/output-stream f)]
@@ -883,7 +795,6 @@ fn fs_main() -> @location(0) vec4f {
                 (vswap! refs conj o)
                 o)
          ->address (fn [o]
-                     
                      (-> o ref! dt-ffi/->pointer dt-ffi/pointer->address)) 
 
          ;; 	auto device = m_device;
@@ -1331,17 +1242,48 @@ fn fs_main() -> @location(0) vec4f {
 
     buf-img))
 
-#_(defn copy-from-buffer [ctx buffer]
-  (raw/wgpuBufferMapAsync (:buffer buffer) raw/WGPUMapMode_Read 0 (:size buffer)
-                          (fn [status user-data]
-                            nil)
-                          nil)
-  (raw/wgpuDevicePoll (:device ctx) 1 nil)
-  (let [^Pointer ret (raw/wgpuBufferGetMappedRange (:buffer buffer) 0 (:size buffer))]
-    (case (:type buffer)
-      :i32 (.getIntArray ret 0 (:length buffer))
-      :u32 (.getIntArray ret 0 (:length buffer))
-      :f32 (.getFloatArray ret 0 (:length buffer)))))
+(defn copy-from-buffer
+  "Copies data from gpu to dest native buffer. If `dest` is nil, return a new buffer."
+  ([ctx buffer]
+   (copy-from-buffer ctx buffer nil))
+  ([ctx buffer dest]
+   (let [dest (or dest (native-buffer/malloc (:size buffer)))
+         result (promise)]
+     
+     (raw/wgpuBufferMapAsync (:buffer buffer) raw/WGPUMapMode_Read 0 (:size buffer)
+                             (raw/map->WGPUBufferMapCallbackInfo
+                              {:callback 
+                               (raw/callback-maker
+                                :void
+                                [:int32
+                                 (by-value :WGPUStringView)
+                                 :pointer
+                                 :pointer]
+                                (fn [status message user1 user2]
+                                  (let [success? (= raw/WGPUMapAsyncStatus_Success status)]
+                                    (prn "buffer status" :success? success? )
+                                    (deliver result
+                                             {:success? success?
+                                              :message (raw/wgpu-string-view->string (.toStruct message))})
+                                    )))}))
+     (raw/wgpuDevicePoll (:device ctx) 1 nil)
+
+     (when (not (:success? @result))
+       (throw (ex-info (:message @result)
+                       {:ctx ctx
+                        :buffer buffer
+                        :dest dest})))
+     (let [ptr (raw/wgpuBufferGetMappedRange (:buffer buffer) 0 (:size buffer))]
+       (prn (native-buffer/wrap-address (dt-ffi/pointer->address ptr) (:size buffer)))
+       (dtype/copy! (native-buffer/wrap-address (dt-ffi/pointer->address ptr) (:size buffer))
+                    (-> dest
+                        (native-buffer/set-native-datatype :int8)))
+
+       dest
+       #_(case (:type buffer)
+         :i32 (.getIntArray ret 0 (:length buffer))
+         :u32 (.getIntArray ret 0 (:length buffer))
+         :f32 (.getFloatArray ret 0 (:length buffer)))))))
 
 #_(defn copy [ctx from to]
   (let [refs (volatile! #{})
@@ -1476,9 +1418,45 @@ fn fs_main() -> @location(0) vec4f {
 
 
 
-(defn encode-compute-pass [ctx command-encoder pass]
-  (throw (ex-info "Not implemented yet." {})))
-(defn encode-render-pass [ctx command-encoder pass]
+(defn ^:private encode-copy-pass [ctx command-encoder pass]
+  (let [{:keys [source destination]} pass
+        source-offset (or (:source-offset pass) 0)
+        destination-offset (or (:destination-offset pass) 0)
+        size (or (:size pass) (:size source))]
+    (raw/wgpuCommandEncoderCopyBufferToBuffer command-encoder
+                                              (:buffer source) source-offset
+                                              (:buffer destination) destination-offset
+                                              size)))
+
+(defn ^:private encode-compute-pass [ctx command-encoder pass]
+  (raw/with-refs
+   (let [{:keys [label pipeline bind-groups dispatch-work-groups]} pass
+         
+         
+         compute-pass-encoder (raw/wgpuCommandEncoderBeginComputePass
+                               command-encoder
+                               (-> (raw/map->WGPUComputePassDescriptor
+                                    {:label (raw/->wgpu-string-view (or label "compute_pass"))})
+                                   ref!
+                                   dt-ffi/->pointer))
+         _ (raw/wgpuComputePassEncoderSetPipeline compute-pass-encoder pipeline)
+         
+         _ (doseq [[group-index bind-group-info] (map-indexed vector bind-groups)]
+             (let [bind-group-layout (raw/wgpuComputePipelineGetBindGroupLayout pipeline group-index)
+                   bind-group (create-bind-group (:device ctx) bind-group-layout bind-group-info)]
+               (raw/wgpuComputePassEncoderSetBindGroup compute-pass-encoder group-index bind-group 0 nil)))
+         
+         _ (raw/wgpuComputePassEncoderDispatchWorkgroups compute-pass-encoder
+                                                         (:x dispatch-work-groups 1)
+                                                         (:y dispatch-work-groups 1)
+                                                         (:z dispatch-work-groups 1))
+         
+         _ (raw/wgpuComputePassEncoderEnd compute-pass-encoder)]
+     (raw/wgpuComputePassEncoderRelease compute-pass-encoder)
+     (vreset! refs nil)
+     nil)))
+
+(defn ^:private encode-render-pass [ctx command-encoder pass]
   (let [draws (:draws pass)
         pass (:render-pass pass)
 
@@ -1547,11 +1525,16 @@ fn fs_main() -> @location(0) vec4f {
 
         _ (doseq [pass passes]
             (cond
+              ;; this needs to get cleaned up
+              ;; there are still other types of passes
               (:render-pass pass)
               (encode-render-pass ctx command-encoder pass)
 
               (:compute-pass pass)
               (encode-compute-pass ctx command-encoder pass)
+              
+              (:copy-pass pass)
+              (encode-copy-pass ctx command-encoder pass)
 
               :else (throw (ex-info "Unrecognized pass"
                                     {:pass pass}))))
@@ -1582,7 +1565,7 @@ fn fs_main() -> @location(0) vec4f {
 
 
 
-(defn create-pipeline [ctx pipeline-descriptor]
+(defn create-render-pipeline [ctx pipeline-descriptor]
   (let [
         refs (volatile! [] )
         ref! (fn [o] 
@@ -1686,24 +1669,6 @@ fn fs_main() -> @location(0) vec4f {
                  (vreset! refs nil)))
     pipeline))
 
-
-
-;; create a direct resource
-;; draw to resource
-;; inspect bytes?
-
-;; (skia/defc skia_direct_bgra8888_buffer skialib com.sun.jna.Pointer [buf width height row-bytes])
-;; ./easel/src/com/phronemophobic/easel/browser.clj:  (skia_direct_bgra8888_buffer buf (int width) (int height) (int row-bytes)))
-
-
-
-
-
-
-
-
-
-
 (defn -main [& args]
   
   ;; (prn (create-shader (create-context)
@@ -1711,17 +1676,11 @@ fn fs_main() -> @location(0) vec4f {
   ;; (prn (create-shader (create-context)
   ;;                     {:src ""}))
   
-  (prn (load-texture
-        (create-context)
-        (ui/filled-rectangle [1 0 0] 10 10)))
-
+  #_(prn (load-texture
+          (create-context)
+          (ui/filled-rectangle [1 0 0] 10 10)))
+  
   #_(prn (create-buffer (create-context)
-                      {:length 10
-                       :type :i32
-                       :usage #{:MapRead :CopyDst}})))
-
-;; (def aos (dt-struct/new-array-of-structs
-;;           :WGPUColorTargetState
-;;           3
-;;           ))
-;; (Map/.put (first aos) :format 1)
+                        {:length 10
+                         :type :i32
+                         :usage #{:MapRead :CopyDst}})))
