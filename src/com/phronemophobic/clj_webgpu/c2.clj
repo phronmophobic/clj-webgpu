@@ -14,23 +14,27 @@
 
 (def shader-source
   "
-struct Data {
-  // Number of valid elements in `values`
-  length : u32,
-  // Array data (must be 4-byte aligned; f32 is fine)
-  values : array<i32>,
-};
+//  #include \"math.wgsl\"
+
+// struct Data {
+//   // Number of valid elements in `values`
+//   length : u32,
+//   // Array data (must be 4-byte aligned; f32 is fine)
+//   values : array<i32>,
+// };
 
 @group(0) @binding(0)
-var<storage, read_write> data : Data;
+var<storage, read_write> data : array<i32>;
+@group(0) @binding(1)
+var<storage, read_write> length : u32;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let i = gid.x;
-  if (i >= data.length) {
+  if (i >= length) {
     return;
   }
-  data.values[i] = data.values[i] * 9;
+  data[i] = data[i]+1; // taylorInvSqrt(data.values[i]);
 }  
   ")
 
@@ -47,24 +51,34 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
                                         {:shader shader})
          
          
-         storage (wgpu/create-buffer ctx {:usage #{:Storage
-                                                   :CopyDst
-                                                   :CopySrc}
-                                          :type :i32
-                                          :length 17})
-         
+         data-storage (wgpu/create-buffer ctx {:usage #{:Storage
+                                                        :CopyDst
+                                                        :CopySrc}
+                                               :type :i32
+                                               :length 16})
          _ (wgpu/copy-to-buffer ctx
-                                storage
+                                data-storage
                                 (dtype/make-container
                                  :native-heap
-                                 :int32
-                                 (into [17]
-                                       (range 16))))
+                                 :int32 (range 16)))
+
+         length-storage (wgpu/create-buffer ctx {:usage #{:Storage
+                                                          :CopyDst
+                                                          :CopySrc}
+                                                 :type :i32
+                                                 :length 1})
+         _ (wgpu/copy-to-buffer ctx
+                                length-storage
+                                (dtype/make-container
+                                 :native-heap
+                                 :int32 [16]))
+         
+         
          
          staging (wgpu/create-buffer ctx {:usage #{:MapRead
                                                    :CopyDst}
                                           :type :i32
-                                          :length 17})
+                                          :length 16})
          
          _ (do (prn "submitting...")
                (flush))
@@ -75,9 +89,9 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
              
              {:compute-pass true
               :pipeline pipeline
-              :bind-groups [[storage]]}
+              :bind-groups [[data-storage length-storage]]}
              {:copy-pass true
-              :source storage
+              :source data-storage
               :destination staging}
              ])
          _ (do (prn "we submitted!")
@@ -88,7 +102,9 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
          _ (do (prn "now save the texture...")
                (flush))
          
-         result (wgpu/copy-from-buffer ctx staging)]
+         result (wgpu/copy-from-buffer ctx staging (dtype/make-container
+                                                    :native-heap :int32 16))
+                    ]
      (vreset! refs [])
      result)))
 
