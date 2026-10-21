@@ -325,7 +325,6 @@
               :resource-type :gc})]
     (doseq [[struct m] (map vector arr ms)
             [k v] m]
-      (prn dtype k v)
       (Map/.put struct k v))
     arr))
 
@@ -368,13 +367,11 @@
 
 
 (def classname-base "com.phronemophobic.clj_webgpu.impl.raw")
-(def defined-structs (hamf/java-linked-hashmap))
 
- 
-
-(doseq [class-def (-> defined-structs
-                      .values)]
-  (insn/define class-def))
+;; (def defined-structs (hamf/java-linked-hashmap))
+;; (doseq [class-def (-> defined-structs
+;;                       .values)]
+;;   (insn/define class-def))
 
 (defn make-struct-class* [dtype]
   (let [defined-structs (hamf/java-linked-hashmap)]
@@ -464,3 +461,14 @@
         (String. bs "utf-8"))
       "")))
 
+(defmacro with-refs [& body]
+  `(let [~'refs (volatile! [])
+         ~'ref! (fn [o#]
+                  (vswap! ~'refs conj o#)
+                  o#)
+         ~'->address (fn [o#]
+                       (-> o#
+                           ~'ref!
+                           dt-ffi/->pointer
+                           dt-ffi/pointer->address))]
+     ~@body))
