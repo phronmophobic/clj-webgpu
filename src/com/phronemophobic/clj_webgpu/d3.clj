@@ -14,6 +14,7 @@
             [com.phronemophobic.clogif :as gif]
             [membrane.ui :as ui]
             [membrane.skia :as skia]
+            [com.phronemophobic.clj-webgpu.impl.shader :as shader]
             [com.phronemophobic.clj-webgpu.compute :as wgpu])
   (:import [manifold3d.linalg DoubleVec3 DoubleVec2 IntegerVec4Vector 
             DoubleVec3Vector DoubleVec4Vector IntegerVec3Vector IntegerVec3 MatrixTransforms DoubleVec4]
@@ -270,12 +271,19 @@
 
         ctx (wgpu/create-context)
 
-        shader (wgpu/create-shader ctx {:src (slurp (io/resource "com/phronemophobic/clj_webgpu/shaders/model_lighting.wgsl"))})
+        shader (wgpu/create-shader ctx
+                                   {:src 
+                                    #_(slurp
+                                     (io/resource "com/phronemophobic/clj_webgpu/shaders/model_lighting.wgsl"))
+                                    (shader/preprocess-shader
+                                     (io/file "../lygia")
+                                     (slurp
+                                      "../clj-webgpu/shaders/default.wgsl"))})
         draw-figure-pipeline
-        (wgpu/create-pipeline ctx
-                              (pipeline-3d  {:fragment-shader {:module shader}
-                                             :vertex-shader {:module shader}})
-                              )
+        (wgpu/create-render-pipeline ctx
+                                     (pipeline-3d  {:fragment-shader {:module shader}
+                                                    :vertex-shader {:module shader}})
+                                     )
         offscreen-texture (wgpu/create-texture
                            ctx
                            {
@@ -322,36 +330,44 @@
 
         model-mat (mat/mmul
                    (apply mutil/rotate rot)
+                   (mutil/rotate 1 0 0) 
                    (normalize-object-mat verts))
-
-        transform (mat/transpose
-                   (mat/mmul
+        
+        
+        camera-mat (mat/mmul
                     (mutil/perspective-fov (* 1/2 Math/PI) 1 0.1 20)
-                    (mutil/translate 0 0 -1)
-                    
-                    model-mat))
+                    (mutil/translate 0 0 -1))
 
         light-mat (do
                     (apply mutil/rotate rot))
 
+        camera-matrix-uni (wgpu/create-buffer ctx {:usage #{:Uniform
+                                                            :CopyDst}
+                                                   :type :f32
+                                                   :length 16})
 
-        uni-matrix
-        (dtype/make-container :native-heap
-                              :float32 
-                              (into []
-                                    cat
-                                    transform))
-        #_(float-array
-           (eduction
-          cat
-          transform))
-
-        uni (wgpu/create-buffer ctx {:usage #{:Uniform
-                                              :CopyDst}
-                                     :type :f32
-                                     :length 16})
-
-        _ (wgpu/copy-to-buffer ctx uni uni-matrix)
+        _ (wgpu/copy-to-buffer ctx
+                               camera-matrix-uni
+                               (dtype/make-container :native-heap
+                                                     :float32 
+                                                     (into []
+                                                           cat
+                                                           (mat/transpose
+                                                            camera-mat))))
+        
+        model-matrix-uni (wgpu/create-buffer ctx {:usage #{:Uniform
+                                                           :CopyDst}
+                                                  :type :f32
+                                                  :length 16})
+        
+        _ (wgpu/copy-to-buffer ctx
+                               model-matrix-uni
+                               (dtype/make-container :native-heap
+                                                     :float32 
+                                                     (into []
+                                                           cat
+                                                           (mat/transpose
+                                                            model-mat))))
 
         uni2-matrix
         (dtype/make-container :native-heap
@@ -360,12 +376,6 @@
                                     cat
                                     (mat/transpose
                                      light-mat)))
-
-        #_(float-array
-         (eduction
-          cat
-          (mat/transpose
-           light-mat)))
 
         uni2 (wgpu/create-buffer ctx {:usage #{:Uniform
                                                :CopyDst}
@@ -400,12 +410,13 @@
          :draws [{:vertex-count (/ (alength verts) 3)
                   :pipeline draw-figure-pipeline
                   :bindings [
-                             uni
+                             camera-matrix-uni
                              buf1
                              normal-buf
                              texture
                              sampler
                              uni2
+                             model-matrix-uni
                              ]}]
          }
         _ (do (prn "submitting...")
@@ -493,14 +504,41 @@
   (animate my-mesh)
   ,)
 (defn -main [& args]
-  (let [mesh (mf/import-mesh "/Users/adrian/Downloads/36ee14ff-06a6-47e1-9601-cbd3daf2e491.glb")]
-    
-    (let [native-buf (draw-mesh mesh [45 45 45  ])
-          [w h] [640 640]
-          buf (byte-array (native-buffer/native-buffer-byte-len native-buf))
-          _ (dtype/copy! native-buf buf)
-          pm (skia/pixmap 0 buf w h  skia/kRGBA_8888_SkColorType skia/kUnpremul_SkAlphaType (* w 4))]
-      (skia/save-image "doesitwork2.png" pm))
-    (prn "done")))
+  
+  (let [;; mesh (mf/import-mesh "/Users/adrian/Downloads/36ee14ff-06a6-47e1-9601-cbd3daf2e491.glb")
+        mesh (mf/import-mesh "/Users/adrian/Downloads/Klein_Smoother_no_base.STL")
+        #_#_mesh (-> (mf/difference
+                      (mf/cube [5 5 5] true)
+                      (mf/cylinder 10
+                                   5))
+                     mf/get-mesh)
+        
+        _ (wgpu/create-context)
+        native-buf (time (draw-mesh mesh [0 0 0]))
+        [w h] [640 640]
+        buf (byte-array (native-buffer/native-buffer-byte-len native-buf))
+        _ (dtype/copy! native-buf buf)
+        pm (skia/pixmap 0 buf w h  skia/kRGBA_8888_SkColorType skia/kUnpremul_SkAlphaType (* w 4))]
+    (skia/save-image "doesitwork2.png" pm)
+    )
+  (prn "done"))
 
+
+(comment
+  (-main)
+  
+  (defn perspective-camera [{:keys [near far fov aspect]}])
+  (defn directional-light [{:keys [pos color intensity]}])
+  
+  ;; shaders namespace with include support wgsl
+  
+  
+  (render
+   {:camera (perspective-camera {})
+    :lights [(directional-light {})]
+    :scene
+    [{:mesh (mesh)
+      :material (pbr)}
+     (cube)]})
+  ,)
 
