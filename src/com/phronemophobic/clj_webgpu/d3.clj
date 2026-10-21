@@ -27,20 +27,6 @@
   (let [pos (.vertProperties mesh)
         buf (float-array
              (eduction
-              ;; (map (fn [ idx]
-              ;;        (eduction
-              ;;         (map (fn [v]
-              ;;                [(.x v)
-              ;;                 (.y v)
-              ;;                 (.z v)]))
-              ;;         [(.get pos (.x idx))
-              ;;          (.get pos (.y idx))
-              ;;          (.get pos (.z idx))])))
-
-              ;; cat
-              ;; cat
-
-              
               (mapcat (fn [i]
                         (eduction
                          (map (fn [j]
@@ -61,7 +47,7 @@
 
 
 
-(defn mesh->normals2 [mesh]
+(defn mesh->normals [mesh]
   "Calculate normals for a sequence of triangles."
   [mesh]
   (let [pos (.vertProperties mesh)
@@ -84,54 +70,10 @@
                     (let [norm (triangle-normal triangle)]
                       [norm norm norm])))
           cat
-          (.toIntArray (.triVerts mesh)))
-         #_(eduction
-            (map (fn [idx]
-                   (eduction
-                    (map (fn [v]
-                           [(.x v)
-                            (.y v)
-                            (.z v)]))
-                    [(.get pos (.x idx))
-                     (.get pos (.y idx))
-                     (.get pos (.z idx))])))
-            (mapcat (fn [triangle]
-                      ;; use same normal for all verts
-                      (let [norm (triangle-normal triangle)]
-                        [norm norm norm])))
-            cat
-            (.triVerts mesh)))]
+          (.toIntArray (.triVerts mesh))))]
     (identity pos)
     (identity mesh)
     normals))
-
-
-(defn mesh->normals [mesh]
-  (let [ ;; normals (.vertNormal mesh)
-
-        ;; buf (if (seq normals)
-        ;;       (float-array
-        ;;        (eduction
-        ;;         (map (fn [ idx]
-        ;;                (eduction
-        ;;                 (map (fn [ v]
-        ;;                        [(.x v)
-        ;;                         (.y v)
-        ;;                         (.z v)]))
-        ;;                 [(.get normals (.x idx))
-        ;;                  (.get normals (.y idx))
-        ;;                  (.get normals (.z idx))])))
-
-        ;;         cat
-        ;;         cat
-        ;;         (.triVerts mesh)))
-        ;;       (mesh->normals2 mesh))
-        buf (mesh->normals2 mesh)
-        ]
-    (identity mesh)
-    buf))
-
-
 
 (defn pipeline-3d [{:keys [vertex-shader
                            fragment-shader]}]
@@ -401,7 +343,7 @@
 
         _ (wgpu/copy-to-buffer ctx buf1 (dtype/make-container :native-heap :float32 verts))
 
-        normals (mesh->normals2 mesh)
+        normals (mesh->normals mesh)
         normal-buf (wgpu/create-buffer ctx {:usage #{:Storage :CopyDst}
                                             :type :f32
                                             :length (alength normals)})
@@ -547,11 +489,6 @@
      (cube)]})
   ,)
 
-(defn vert-init! [])
-(defn vert-update-camera [])
-(defn vert-update-model [])
-(defn vert-draw! [{}])
-
 (defn init! [{:keys [width height] :as ctx}]
   (let [gpu-context (wgpu/create-context)
         offscreen-texture (wgpu/create-texture
@@ -634,7 +571,6 @@
 
 (defn check-init [_]
   (time  (init! {:width 100 :height 100}))
-  (System/gc)
   (println "done."))
 
 
@@ -679,7 +615,7 @@
                                                              :length (alength verts)})
                           _ (wgpu/copy-to-buffer gpu-context vertex-buffer (dtype/make-container :native-heap :float32 verts))
                           
-                          normals (mesh->normals2 mesh)
+                          normals (mesh->normals mesh)
                           normal-buffer (wgpu/create-buffer gpu-context
                                                             {:usage #{:Storage :CopyDst}
                                                              :type :f32
@@ -756,35 +692,7 @@
                              (mutil/rotate 1 0 0)
                              (normalize-object-mat verts)
                              )}))
-                    (range 10))
-              #_[{:id (random-uuid)
-                      :type :mesh
-                      :mesh my-mesh
-                      :model-matrix
-                      (mat/mmul
-                       #_(mutil/rotate 1 0 0)
-                       (mutil/translate 0 0 -10)
-                       (normalize-object-mat verts))}
-                     
-                     {:id (random-uuid)
-                      :type :mesh
-                      :mesh my-mesh
-                      :model-matrix
-                      (mat/mmul
-                       #_(mutil/rotate 1 0 0)
-                       (mutil/translate 0 -0.5 0)
-                       (normalize-object-mat verts))}
-                     
-                     {:id (random-uuid)
-                      :type :mesh
-                      :mesh my-mesh
-                      :model-matrix
-                      (mat/mmul
-                       #_(mutil/rotate 1 0 0)
-                       (mutil/translate -0.50 -0.5 0)
-                       (normalize-object-mat verts))}]})
-        
-        ;; _ (wgpu/poll (:device ctx) true)
+                    (range 10))})
         
         pm (ctx->pixmap ctx nil)]
     (skia/save-image "woohoo.png" pm)
