@@ -573,11 +573,76 @@
   (time  (init! {:width 100 :height 100}))
   (println "done."))
 
+(defmulti prep-draw (fn [ctx draw]
+                      (:type draw)))
+
+(defmethod prep-draw :mesh [ctx draw]
+  (let [{:keys [gpu-context]} ctx
+        camera-uniform (-> ctx :uniform :camera)
+
+        {:keys [mesh id model-matrix]} draw
+        
+        {:keys [model-uniform
+                vertex-buffer
+                normal-buffer
+                vertex-count]
+         :as instance} 
+        (if-let [instance (get-in ctx [:instance id])]
+          instance
+          (let [verts (if (instance? (class (float-array 0)) mesh)
+                        mesh
+                        (mesh->verts mesh))
+                vertex-buffer (wgpu/create-buffer gpu-context
+                                                  {:usage #{:Storage :CopyDst}
+                                                   :type :f32
+                                                   :length (alength verts)})
+                _ (wgpu/copy-to-buffer gpu-context vertex-buffer (dtype/make-container :native-heap :float32 verts))
+                
+                normals (mesh->normals mesh)
+                normal-buffer (wgpu/create-buffer gpu-context
+                                                  {:usage #{:Storage :CopyDst}
+                                                   :type :f32
+                                                   :length (alength normals)})
+                _ (wgpu/copy-to-buffer gpu-context normal-buffer (dtype/make-container :native-heap :float32 normals))
+                
+                model-uniform (wgpu/create-buffer gpu-context
+                                                  {:usage #{:Uniform
+                                                            :CopyDst}
+                                                   :type :f32
+                                                   :length 16})]
+            
+            
+            {:vertex-count (quot (alength verts) 3)
+             :vertex-buffer vertex-buffer
+             :normal-buffer normal-buffer
+             :model-uniform model-uniform}))
+        ctx (assoc-in ctx [:instance id] instance)
+        
+        model-matrix (:model-matrix draw)
+        _ (wgpu/copy-to-buffer gpu-context
+                               model-uniform
+                               (dtype/make-container :native-heap
+                                                     :float32 
+                                                     (into []
+                                                           cat
+                                                           (mat/transpose
+                                                            (or model-matrix
+                                                                (mutil/identity))))))
+        
+        
+        gpu-draw {:vertex-count vertex-count
+                  :pipeline (-> ctx :pipeline :mesh)
+                  :bindings [camera-uniform
+                             vertex-buffer
+                             normal-buffer
+                             model-uniform
+                             
+                             ]}]
+    [ctx gpu-draw]))
 
 (defn draw! [ctx scene] 
-  
-  (let [camera-uniform (-> ctx :uniform :camera)
-        gpu-context (:gpu-context ctx)
+  (let [gpu-context (:gpu-context ctx)
+        camera-uniform (-> ctx :uniform :camera)
         _ (wgpu/copy-to-buffer gpu-context
                                camera-uniform
                                (dtype/make-container :native-heap
@@ -595,66 +660,7 @@
           (if (not draws)
             [ctx gpu-draws]
             (let [draw (first draws)
-                  
-                  ;; assume mesh for now
-                  {:keys [mesh id model-matrix]} draw
-                  
-                  {:keys [model-uniform
-                          vertex-buffer
-                          normal-buffer
-                          vertex-count]
-                   :as instance} 
-                  (if-let [instance (get-in ctx [:instance id])]
-                    instance
-                    (let [verts (if (instance? (class (float-array 0)) mesh)
-                                  mesh
-                                  (mesh->verts mesh))
-                          vertex-buffer (wgpu/create-buffer gpu-context
-                                                            {:usage #{:Storage :CopyDst}
-                                                             :type :f32
-                                                             :length (alength verts)})
-                          _ (wgpu/copy-to-buffer gpu-context vertex-buffer (dtype/make-container :native-heap :float32 verts))
-                          
-                          normals (mesh->normals mesh)
-                          normal-buffer (wgpu/create-buffer gpu-context
-                                                            {:usage #{:Storage :CopyDst}
-                                                             :type :f32
-                                                             :length (alength normals)})
-                          _ (wgpu/copy-to-buffer gpu-context normal-buffer (dtype/make-container :native-heap :float32 normals))
-                          
-                          model-uniform (wgpu/create-buffer gpu-context
-                                                            {:usage #{:Uniform
-                                                                      :CopyDst}
-                                                             :type :f32
-                                                             :length 16})]
-                      
-                      
-                      {:vertex-count (quot (alength verts) 3)
-                       :vertex-buffer vertex-buffer
-                       :normal-buffer normal-buffer
-                       :model-uniform model-uniform}))
-                  ctx (assoc-in ctx [:instance id] instance)
-                  
-                  model-matrix (:model-matrix draw)
-                  _ (wgpu/copy-to-buffer gpu-context
-                                         model-uniform
-                                         (dtype/make-container :native-heap
-                                                               :float32 
-                                                               (into []
-                                                                     cat
-                                                                     (mat/transpose
-                                                                      (or model-matrix
-                                                                          (mutil/identity))))))
-                  
-                  
-                  gpu-draw {:vertex-count vertex-count
-                            :pipeline (-> ctx :pipeline :mesh)
-                            :bindings [camera-uniform
-                                       vertex-buffer
-                                       normal-buffer
-                                       model-uniform
-                                       
-                                       ]}]
+                  [ctx gpu-draw] (prep-draw ctx draw)]
               (recur ctx (next draws) (conj gpu-draws gpu-draw)))))
         
         draw-pass {:render-pass (:render-pass ctx)
