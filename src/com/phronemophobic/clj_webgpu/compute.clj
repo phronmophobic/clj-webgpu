@@ -94,8 +94,6 @@
                                                          [(keyword short-name) value])))
 
                                                  enum-vals)])))]
-    ;; shape is {enum-group-name {enum-kw enum-val}}
-
     `(do
       ~@(eduction
          (map (fn [[full-enum-name enum-vals]]
