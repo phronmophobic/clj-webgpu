@@ -175,6 +175,35 @@
                      :pointer]))
   ,)
 
+(def ^:private uncaptured-errors (atom {}))
+(defn add-error!
+  "Shouldn't be called by anyone"
+  [err]
+  (swap! uncaptured-errors
+         update-vals
+         #(conj % err))
+  nil)
+
+(defmacro with-errors [& body]
+  `(let [k# (Object.)]
+     (swap! uncaptured-errors assoc k# [])
+     
+     (try
+       (let [result# (do ~@body)
+             
+             [error-map# _#] (swap-vals! uncaptured-errors dissoc k#)]
+         [(get error-map# k#)
+          result#])
+       (finally
+         (swap! uncaptured-errors dissoc k#)))))
+
+(def ^:private unhandled-error-type->kw
+  {raw/WGPUErrorType_Force32 :Force32
+   raw/WGPUErrorType_Internal :Internal
+   raw/WGPUErrorType_NoError :NoError
+   raw/WGPUErrorType_OutOfMemory :OutOfMemory
+   raw/WGPUErrorType_Unknown :Uknown
+   raw/WGPUErrorType_Validation :Validation})
 
 (defonce ^:private ctx*
   (delay
@@ -204,9 +233,25 @@
           _ (clean-ptr @adapter*
                        raw/wgpuAdapterRelease)
 
+          device-descriptor
+          (raw/map->WGPUDeviceDescriptor
+           {:uncapturedErrorCallbackInfo
+            (raw/map->WGPUUncapturedErrorCallbackInfo
+             {:callback
+              (raw/callback-maker
+               :void
+               [:pointer
+                :int32
+                (by-value :WGPUStringView)
+                :pointer
+                :pointer]
+               (fn [device error-type message user-data1 user-data2]
+                 (add-error! {:type (unhandled-error-type->kw error-type)
+                              :message (raw/wgpu-string-view->string (.toStruct message))})))})})
+
           device* (promise)
           _ (raw/wgpuAdapterRequestDevice @adapter*
-                                          nil
+                                          device-descriptor
                                           (raw/map->WGPURequestDeviceCallbackInfo
                                            {:callback
                                             (raw/callback-maker
@@ -395,13 +440,18 @@
           (when label
             {:label (->wgpu-string-view label)})))
 
-        shader (raw/wgpuDeviceCreateShaderModule (:device ctx)
-                                                 descriptor)]
+        [errors shader] (with-errors
+                         (raw/wgpuDeviceCreateShaderModule (:device ctx)
+                                                           descriptor))]
+
     (assert shader)
     ;; I'm not sure this is required, but the purpose
     ;; is to prevent the unlikely gc of these before the shader is created.
     (identity [chain next-in-chain descriptor])
     (clean-ptr shader raw/wgpuShaderModuleRelease)
+    (when (seq errors)
+      (throw (ex-info "Error creating shader"
+                      {:errors errors})))
 
     shader))
 
