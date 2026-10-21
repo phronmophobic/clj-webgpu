@@ -472,3 +472,5 @@
                            dt-ffi/->pointer
                            dt-ffi/pointer->address))]
      ~@body))
+
+(def COPY_BYTES_PER_ROW_ALIGNMENT 256)

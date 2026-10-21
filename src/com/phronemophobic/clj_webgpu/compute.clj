@@ -548,6 +548,108 @@ fn fs_main() -> @location(0) vec4f {
 
      buf)))
 
+
+
+(defn padded-row-bytes [packed-size]
+  (let [leftover (mod packed-size raw/COPY_BYTES_PER_ROW_ALIGNMENT)
+        size (+ packed-size (- raw/COPY_BYTES_PER_ROW_ALIGNMENT
+                               leftover))]
+    size))
+
+(defn save-texture3
+  "Save texture to pixmap, `pm`.
+  
+  If pm is nil, then one will be allocated.
+  
+  returns buf."
+  ([ctx pm texture width height]
+   (let [{:keys [device queue]} ctx
+         
+         refs (volatile! [])
+         ref! (fn [o]
+                (vswap! refs conj o)
+                o)
+         ->address (fn [o]
+                     (-> o ref! dt-ffi/->pointer dt-ffi/pointer->address)) 
+
+         encoder (raw/wgpuDeviceCreateCommandEncoder
+                  device
+                  (raw/map->WGPUCommandEncoderDescriptor
+                   {:label (->wgpu-string-view "command_encoder")})
+                  )
+         source (raw/map->WGPUTexelCopyTextureInfo
+                 {:texture (->address texture)})
+         
+         bytes-per-row (padded-row-bytes (* 4 width))
+         pixelBuffer-size (* height bytes-per-row)
+         pixelBuffer (raw/wgpuDeviceCreateBuffer
+                      device
+                      (raw/map->WGPUBufferDescriptor
+                       {:usage (int
+                                (bit-or raw/WGPUBufferUsage_MapRead raw/WGPUBufferUsage_CopyDst))
+                        :size pixelBuffer-size
+                        :mappedAtCreation (int 0)}))
+         
+         destination (raw/map->WGPUTexelCopyBufferInfo
+                      {:buffer (->address pixelBuffer)
+                       :layout
+                       (raw/map->WGPUTexelCopyBufferLayout
+                        {:bytesPerRow bytes-per-row
+                         :offset 0
+                         :rowsPerImage height})})
+         _ (raw/wgpuCommandEncoderCopyTextureToBuffer
+            encoder
+            source
+            destination
+            (raw/map->WGPUExtent3D
+             {:width (int width)
+              :height (int height)
+              :depthOrArrayLayers (int 1)}))
+         
+         queue (raw/wgpuDeviceGetQueue device)
+         
+         command-buffer (raw/wgpuCommandEncoderFinish
+                         encoder
+                         (raw/map->WGPUCommandBufferDescriptor
+                          {:label (->wgpu-string-view "command_buffer")}))
+         
+         _ (raw/wgpuQueueSubmit queue 1 
+                                (dt-ffi/make-ptr :pointer (->address command-buffer)))
+         
+         _ (raw/wgpuBufferMapAsync pixelBuffer raw/WGPUMapMode_Read 0 pixelBuffer-size
+                                   (raw/map->WGPUBufferMapCallbackInfo
+                                    {:callback 
+                                     (raw/callback-maker
+                                      :void
+                                      [:int32
+                                       (by-value :WGPUStringView)
+                                       :pointer
+                                       :pointer]
+                                      (fn [status message user1 user2]
+                                        #_(prn "buffer status" (raw/wgpu-string-view->string (.toStruct message)))))}))
+         
+         _ (raw/wgpuDevicePoll device 1  nil)
+         bs-ptr (raw/wgpuBufferGetMappedRange pixelBuffer 0 pixelBuffer-size)
+         
+         pm (if pm
+              (update pm :id inc)
+              (let [native-buf (native-buffer/malloc pixelBuffer-size)]
+                (-> (skia/pixmap 0 
+                                 (-> native-buf dt-ffi/->pointer .address )
+                                 width height skia/kRGBA_8888_SkColorType skia/kUnpremul_SkAlphaType bytes-per-row)
+                    (assoc :native-buf native-buf))))
+         
+         buf (:native-buf pm)
+         _ (dtype/copy! (native-buffer/wrap-address (->address bs-ptr) pixelBuffer-size)
+                        buf)]
+     (raw/wgpuCommandEncoderRelease encoder)
+     (raw/wgpuCommandBufferRelease command-buffer)
+     (raw/wgpuBufferRelease pixelBuffer)
+     
+     (vreset! refs nil)
+
+     pm)))
+
 (defn copy-from-buffer
   "Copies data from gpu to dest native buffer. If `dest` is nil, return a new buffer."
   ([ctx buffer]

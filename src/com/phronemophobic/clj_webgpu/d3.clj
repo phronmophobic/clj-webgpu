@@ -730,19 +730,7 @@
 (defn ctx->pixmap [ctx pm]
   (let [{:keys [gpu-context width height]} ctx
         offscreen-texture (-> ctx :texture :screen)
-        native-buf (:native-buf pm)
-        native-buf (wgpu/save-texture2 gpu-context native-buf offscreen-texture width height)
-
-        pm (if pm
-             (update pm :id inc)
-             (-> (skia/pixmap 0 
-                              (-> native-buf dt-ffi/->pointer .address )
-                              #_(byte-array (native-buffer/native-buffer-byte-len native-buf))
-                              width height skia/kRGBA_8888_SkColorType skia/kUnpremul_SkAlphaType (* width 4))
-                 (assoc :native-buf native-buf)))
-
-        ;;_ (dtype/copy! native-buf (:buf pm))
-        ]
+        pm (wgpu/save-texture3 gpu-context pm offscreen-texture width height)]
     pm))
 
 (defn check-draw [_]
@@ -804,8 +792,8 @@
 
 
 (defn check-redraw [_]
-  (let [width 1024
-        height 640
+  (let [width 441
+        height 517
         ctx (init! {:width width :height height})
         
         my-mesh (-> #_(mf/sphere 1 100)
