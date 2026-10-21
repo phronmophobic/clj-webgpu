@@ -415,7 +415,66 @@
                raw/wgpuSamplerRelease)
     {:sampler sampler}))
 
+(def compilation-message-type->kw
+  {raw/WGPUCompilationMessageType_Error :error
+   raw/WGPUCompilationMessageType_Force32 :force32
+   raw/WGPUCompilationMessageType_Info :info 
+   raw/WGPUCompilationMessageType_Warning :warning})
 
+(def compilation-status->kw
+  {raw/WGPUCompilationInfoRequestStatus_Success :success
+   raw/WGPUCompilationInfoRequestStatus_Force32 :force32
+   raw/WGPUCompilationInfoRequestStatus_CallbackCancelled :cancelled})
+
+;; not implemented yet :-/
+#_(defn check-shader [ctx shader-module]
+  (let [result (promise)
+        _
+        (raw/wgpuShaderModuleGetCompilationInfo 
+         shader-module
+         (raw/map->WGPUCompilationInfoCallbackInfo
+          {:mode raw/WGPUCallbackMode_AllowSpontaneous
+           :callback 
+           (raw/callback-maker
+            :void
+            [:int32
+             :pointer
+             :pointer
+             :pointer]
+            (fn [status* compilation-info* _ _]
+              (let [status (get compilation-status->kw status* :unknown)]
+                (prn "compilation status" status)
+                (deliver 
+                 result
+                 (if (= status raw/WGPUCompilationInfoRequestStatus_Success)
+                   {:status status}
+                   (let [compilation-info (dt-ffi/ptr->struct :WGPUCompilationInfo
+                                                              compilation-info*)
+                         n (:messageCount compilation-info)
+                         
+                         struct-size (-> (dt-struct/get-struct-def :WGPUCompilationMessage)
+                                         :datatype-size)
+                         messages* (dt-struct/inplace-new-array-of-structs
+                                    :WGPUCompilationMessage
+                                    (native-buffer/wrap-address
+                                     (:messages compilation-info)
+                                     (* struct-size n)))
+                         
+                         messages
+                         (into []
+                               (map (fn [message]
+                                      (let [{:keys [message type lineNum linePos offset length]} message]
+                                        {:message (raw/wgpu-string-view->string (.toStruct message))
+                                         :type (get compilation-message-type->kw type :unknown)
+                                         :lineNum lineNum
+                                         :linePos linePos
+                                         :offset offset
+                                         :length length})))
+                               messages*)]
+                     {:status status
+                      :messages messages})
+                   )))))}))]
+    @result))
 
 (defn create-shader [ctx {:keys [src label]}]
   (let [chain 
@@ -455,6 +514,12 @@
 
     shader))
 
+(defn check-shader-checking [_]
+  (create-shader (create-context)
+                 {:src "basldkjf"
+                  #_(slurp
+                         "../clj-webgpu/shaders/default2.wgsl")})
+  (println "done."))
 
 (def shaderSource
   "
