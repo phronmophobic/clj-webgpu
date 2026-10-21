@@ -189,10 +189,15 @@
      :loadOp :Clear
      :resolveTarget 0
      :storeOp :Store
-     :clearValue {:r 0.9
-                  :g 0.1
-                  :b 0.2
-                  :a 1.0}}]})
+     :clearValue 
+     {:r 0
+      :g 0
+      :b 0
+      :a 1}
+     #_{:r 0.9
+        :g 0.1
+        :b 0.2
+        :a 1.0}}]})
 
 
 (defn extents
@@ -535,10 +540,372 @@
   
   (render
    {:camera (perspective-camera {})
-    :lights [(directional-light {})]
+    ;; :lights [(directional-light {})]
     :scene
     [{:mesh (mesh)
       :material (pbr)}
      (cube)]})
   ,)
+
+(defn vert-init! [])
+(defn vert-update-camera [])
+(defn vert-update-model [])
+(defn vert-draw! [{}])
+
+(defn init! [{:keys [width height] :as ctx}]
+  (let [gpu-context (wgpu/create-context)
+        offscreen-texture (wgpu/create-texture
+                           gpu-context
+                           {
+                            :dimension :3D
+                            :size {:width width
+                                   :height height
+                                   :depthOrArrayLayers 1}
+                            :format :RGBA8UnormSrgb
+                            :mipLevelCount 1
+                            :sampleCount 1
+                            :usage #{:RenderAttachment :CopySrc}})
+        offscreen-texture-view (wgpu/create-texture-view
+                                offscreen-texture
+                                {:baseArrayLayer 0
+                                 :arrayLayerCount 1
+                                 :baseMipLevel 0
+                                 :mipLevelCount 1
+                                 :aspect :All})
+        
+        mesh-shader (wgpu/create-shader gpu-context
+                                        {:src 
+                                         #_(slurp
+                                            (io/resource "com/phronemophobic/clj_webgpu/shaders/model_lighting.wgsl"))
+                                         (shader/preprocess-shader
+                                          (io/file "../lygia")
+                                          (slurp
+                                           "../clj-webgpu/shaders/default2.wgsl"))})
+        
+        depth-texture (wgpu/create-texture
+                       gpu-context
+                       {
+                        :size {:width width
+                               :height height
+                               :depthOrArrayLayers 1}
+                        :mipLevelCount 1
+                        :sampleCount 1
+                        :dimension :2D
+                        :format :Depth24Plus
+                        :usage #{:RenderAttachment}})
+
+        depth-texture-view
+        (wgpu/create-texture-view
+         depth-texture
+         {
+          :aspect :DepthOnly
+          :baseArrayLayer 0
+          :arrayLayerCount 1
+          :baseMipLevel 0
+          :mipLevelCount 1
+          :format :Depth24Plus})]
+    (merge
+     ctx
+     {:gpu-context gpu-context
+      :uniform {:camera (wgpu/create-buffer gpu-context
+                                            {:usage #{:Uniform
+                                                      :CopyDst}
+                                             :type :f32
+                                             :length 16})
+                :model (wgpu/create-buffer gpu-context {:usage #{:Uniform
+                                                                 :CopyDst}
+                                                        :type :f32
+                                                        :length 16})}
+      :render-pass (render-pass-3d {:texture-view offscreen-texture-view
+                                    :depth-texture-view depth-texture})
+      :texture {:screen offscreen-texture
+                :depth depth-texture}
+      :texture-view {:screen offscreen-texture-view
+                     :depth depth-texture-view}
+      
+      
+      :shader {:mesh mesh-shader}
+      
+      
+      :pipeline {:mesh (wgpu/create-render-pipeline gpu-context
+                                                    (pipeline-3d  {:fragment-shader {:module mesh-shader}
+                                                                   :vertex-shader {:module mesh-shader}}))}})))
+
+
+(defn check-init [_]
+  (time  (init! {:width 100 :height 100}))
+  (System/gc)
+  (println "done."))
+
+
+(defn draw! [ctx scene] 
+  
+  (let [camera-uniform (-> ctx :uniform :camera)
+        gpu-context (:gpu-context ctx)
+        _ (wgpu/copy-to-buffer gpu-context
+                               camera-uniform
+                               (dtype/make-container :native-heap
+                                                     :float32 
+                                                     (into []
+                                                           cat
+                                                           (mat/transpose
+                                                            (:camera scene)))))
+
+        
+        [ctx gpu-draws]
+        (loop [ctx ctx
+               draws (seq (:draw scene))
+               gpu-draws []]
+          (if (not draws)
+            [ctx gpu-draws]
+            (let [draw (first draws)
+                  
+                  ;; assume mesh for now
+                  {:keys [mesh id model-matrix]} draw
+                  
+                  {:keys [model-uniform
+                          vertex-buffer
+                          normal-buffer
+                          vertex-count]
+                   :as instance} 
+                  (if-let [instance (get-in ctx [:instance id])]
+                    instance
+                    (let [verts (if (instance? (class (float-array 0)) mesh)
+                                  mesh
+                                  (mesh->verts mesh))
+                          vertex-buffer (wgpu/create-buffer gpu-context
+                                                            {:usage #{:Storage :CopyDst}
+                                                             :type :f32
+                                                             :length (alength verts)})
+                          _ (wgpu/copy-to-buffer gpu-context vertex-buffer (dtype/make-container :native-heap :float32 verts))
+                          
+                          normals (mesh->normals2 mesh)
+                          normal-buffer (wgpu/create-buffer gpu-context
+                                                            {:usage #{:Storage :CopyDst}
+                                                             :type :f32
+                                                             :length (alength normals)})
+                          _ (wgpu/copy-to-buffer gpu-context normal-buffer (dtype/make-container :native-heap :float32 normals))
+                          
+                          model-uniform (wgpu/create-buffer gpu-context
+                                                            {:usage #{:Uniform
+                                                                      :CopyDst}
+                                                             :type :f32
+                                                             :length 16})]
+                      
+                      
+                      {:vertex-count (quot (alength verts) 3)
+                       :vertex-buffer vertex-buffer
+                       :normal-buffer normal-buffer
+                       :model-uniform model-uniform}))
+                  ctx (assoc-in ctx [:instance id] instance)
+                  
+                  model-matrix (:model-matrix draw)
+                  _ (wgpu/copy-to-buffer gpu-context
+                                         model-uniform
+                                         (dtype/make-container :native-heap
+                                                               :float32 
+                                                               (into []
+                                                                     cat
+                                                                     (mat/transpose
+                                                                      (or model-matrix
+                                                                          (mutil/identity))))))
+                  
+                  
+                  gpu-draw {:vertex-count vertex-count
+                            :pipeline (-> ctx :pipeline :mesh)
+                            :bindings [camera-uniform
+                                       vertex-buffer
+                                       normal-buffer
+                                       model-uniform
+                                       
+                                       ]}]
+              (recur ctx (next draws) (conj gpu-draws gpu-draw)))))
+        
+        draw-pass {:render-pass (:render-pass ctx)
+                   :draws gpu-draws}]
+    (wgpu/submit gpu-context
+                 [draw-pass])
+    ctx))
+
+(defn ctx->pixmap [ctx pm]
+  (let [{:keys [gpu-context width height]} ctx
+        offscreen-texture (-> ctx :texture :screen)
+        native-buf (:native-buf pm)
+        native-buf (wgpu/save-texture2 gpu-context native-buf offscreen-texture width height)
+
+        pm (if pm
+             (update pm :id inc)
+             (-> (skia/pixmap 0 
+                              (-> native-buf dt-ffi/->pointer .address )
+                              #_(byte-array (native-buffer/native-buffer-byte-len native-buf))
+                              width height skia/kRGBA_8888_SkColorType skia/kUnpremul_SkAlphaType (* width 4))
+                 (assoc :native-buf native-buf)))
+
+        ;;_ (dtype/copy! native-buf (:buf pm))
+        ]
+    pm))
+
+(defn check-draw [_]
+  (let [ctx (init! {:width 640 :height 640})
+        
+        my-mesh (mf/import-mesh "/Users/adrian/Downloads/Klein_Smoother_no_base.STL")
+        verts (mesh->verts my-mesh)
+
+        ctx (draw! 
+             ctx
+             {:camera (mat/mmul
+                       (mutil/perspective-fov (* 1/2 Math/PI) 1 0.1 20)
+                       (mutil/translate 0 0 -1))
+              :draw 
+              (into []
+                    (map (fn [i]
+                           {:id (random-uuid)
+                            :type :mesh
+                            :mesh my-mesh
+                            :model-matrix
+                            (mat/mmul
+                             (mutil/translate i 0 (* 2 i))
+                             (mutil/rotate 1 0 0)
+                             (normalize-object-mat verts)
+                             )}))
+                    (range 10))
+              #_[{:id (random-uuid)
+                      :type :mesh
+                      :mesh my-mesh
+                      :model-matrix
+                      (mat/mmul
+                       #_(mutil/rotate 1 0 0)
+                       (mutil/translate 0 0 -10)
+                       (normalize-object-mat verts))}
+                     
+                     {:id (random-uuid)
+                      :type :mesh
+                      :mesh my-mesh
+                      :model-matrix
+                      (mat/mmul
+                       #_(mutil/rotate 1 0 0)
+                       (mutil/translate 0 -0.5 0)
+                       (normalize-object-mat verts))}
+                     
+                     {:id (random-uuid)
+                      :type :mesh
+                      :mesh my-mesh
+                      :model-matrix
+                      (mat/mmul
+                       #_(mutil/rotate 1 0 0)
+                       (mutil/translate -0.50 -0.5 0)
+                       (normalize-object-mat verts))}]})
+        
+        ;; _ (wgpu/poll (:device ctx) true)
+        
+        pm (ctx->pixmap ctx nil)]
+    (skia/save-image "woohoo.png" pm)
+    (prn "done")))
+
+
+(defn check-redraw [_]
+  (let [width 1024
+        height 640
+        ctx (init! {:width width :height height})
+        
+        my-mesh (-> #_(mf/sphere 1 100)
+                    (mf/cube 1 1 1 true)
+                    mf/get-mesh)
+        #_(mf/import-mesh "/Users/adrian/Downloads/Klein_Smoother_no_base.STL")
+        verts (mesh->verts my-mesh)
+
+        pm* (volatile! (ctx->pixmap ctx nil))
+        ctx* (volatile! ctx)
+        camera* (volatile! 
+                 (#_mutil/perspective-fov3-reverseZ
+                  mutil/perspective-fov
+                   (/ (* Math/PI 45) 180)
+                   
+                   (/ width height)
+                   0.1
+                   1000)
+                            
+                            #_(mutil/translate 0 0 -1))
+        view-fn (fn []
+                  (time
+                   (do
+                     (vswap! ctx* draw!
+                             {:camera @camera*
+                              :draw 
+                              [{:id [:mesh 0]
+                                :type :mesh
+                                :mesh my-mesh
+                                :model-matrix
+                                (mat/mmul
+                                 (mutil/translate 0 0 -10)
+                                 ;; (mutil/rotate 1 0 0)
+                                 #_(normalize-object-mat verts)
+                                 )}
+                               {:id [:mesh 1]
+                                :type :mesh
+                                :mesh (-> (mf/sphere 1 100)
+                                          mf/get-mesh)
+                                :model-matrix
+                                (mat/mmul
+                                 (mutil/translate 0 3 -10)
+                                 ;; (mutil/rotate 1 0 0)
+                                 #_(normalize-object-mat verts)
+                                 )}
+                               {:id [:mesh 2]
+                                :type :mesh
+                                :mesh (-> (mf/difference (mf/cylinder 3 1 1 100 true)
+                                                         (mf/sphere 1.2 100 ))
+                                          mf/get-mesh)
+                                :model-matrix
+                                (mat/mmul
+                                 (mutil/translate -3 0 -10)
+                                 ;; (mutil/rotate 1 0 0)
+                                 #_(normalize-object-mat verts)
+                                 )}]
+                                    
+                                    })
+                     (let [pm (vreset! pm* (ctx->pixmap @ctx* @pm*))]
+                       (ui/on
+                        :key-press
+                        (fn [s]
+                          (prn s)
+                          (let [dist 0.12]
+                            (case s
+                              ("w" :kp_8) (vswap! camera* #(mat/mmul 
+                                                            %
+                                                            (mutil/translate 0 dist 0)
+                                                      ))
+                              ("s" :kp_2) (vswap! camera* #(mat/mmul 
+                                                            %
+                                                            (mutil/translate 0 (- dist) 0)))
+
+                              :left (vswap! camera* #(mat/mmul 
+                                                      %
+                                                      (mutil/translate (- dist) 0 0)
+                                                      ))
+                              :right (vswap! camera* #(mat/mmul
+                                                       %
+                                                       (mutil/translate dist 0 0)
+                                                       ))
+                              :up (vswap! camera* #(mat/mmul 
+                                                    %
+                                                    (mutil/translate 0 0 dist)
+                                                    
+                                                    ))
+                              :down (vswap! camera* #(mat/mmul 
+                                                      %
+                                                      (mutil/translate 0 0 (- dist))
+                                                      
+                                                      ))
+                              nil)))
+                        pm)))))
+        ]
+    (skia/run-sync view-fn
+                   {:window-start-width width
+                    :window-start-height height})
+
+    (prn "done")
+    (shutdown-agents)))
+
+
 
