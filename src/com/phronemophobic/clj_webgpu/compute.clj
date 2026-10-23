@@ -884,7 +884,8 @@ fn fs_main() -> @location(0) vec4f {
                              :sampler (->address (:sampler binding))}
 
                             :else (throw (ex-info "Unknown buffer type"
-                                                  {:binding binding})))))
+                                                  {:index i
+                                                   :binding binding})))))
                        bindings))
         
 
