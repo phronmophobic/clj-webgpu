@@ -311,9 +311,9 @@
 
 (defn membrane-as-native-buffer
   "Loads an image (eg. png) and returns a native buffer in rgba8888 format."
-  [view]
-  (let [[w h] (ui/bounds view)
-        n-bytes (* 4 w h)
+  [view [w h]]
+  (let [n-bytes (* 4 w h)
+
         buf (native-buffer/malloc n-bytes)
         skia-resource
         (com.sun.jna.Pointer.
@@ -333,7 +333,10 @@
 (defn load-texture [{:keys [device queue] :as ctx} view]
   (let [
         [width height] (ui/bounds view)
-        buf (membrane-as-native-buffer view)
+        width (max 1 (long (Math/ceil width)))
+        height (max 1 (long (Math/ceil height)))
+
+        buf (membrane-as-native-buffer view [width height])
         texture-size (raw/map->WGPUExtent3D
                       {:width width
                        :height height
