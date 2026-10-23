@@ -132,9 +132,9 @@
      :resolveTarget 0
      :storeOp :Store
      :clearValue 
-     {:r 0
-      :g 0
-      :b 0
+     {:r 1
+      :g 1
+      :b 1
       :a 1}
      #_{:r 0.9
         :g 0.1
@@ -640,6 +640,70 @@
                              ]}]
     [ctx gpu-draw]))
 
+(defmethod prep-draw :render-shader [ctx draw]
+  (let [{:keys [gpu-context]} ctx
+        camera-uniform (-> ctx :uniform :camera)
+
+        {:keys [id bindings drawf shader]} draw
+        
+        [ctx shader-module]
+        (if-let [shader-module (-> ctx :shader (get shader))]
+          [ctx shader-module]
+          (let [shader-module (wgpu/create-shader gpu-context
+                                                  {:src (slurp (:resource shader))})]
+            [(assoc-in ctx [:shader shader] shader-module)
+             shader-module]))
+
+        {:keys [buffers pipeline]
+         :as instance} 
+        (if-let [instance (get-in ctx [:instance id])]
+          instance
+          (let [;; create buffers
+                buffers
+                (into {}
+                      (map (fn [[k {:keys [type opts] :as m}]]
+                             (case type
+                               :sampler (wgpu/create-sampler gpu-context)
+
+                               :buffer
+                               (let [buffer (wgpu/create-buffer gpu-context
+                                                                opts)]
+                                 (when-let [data (:data m)]
+                                   (wgpu/copy-to-buffer gpu-context
+                                                        buffer
+                                                        data))
+                                 [k buffer]))))
+                      bindings)
+                
+                pipeline
+                (wgpu/create-render-pipeline
+                 gpu-context
+                 (pipeline-3d {:fragment-shader
+                               {:module shader-module}
+                               :vertex-shader
+                               {:module shader-module}}))]
+            {:buffers buffers
+             :pipeline pipeline}))
+        
+        
+        gpu-draw (drawf ctx buffers)
+        gpu-draw (merge
+                  {:pipeline pipeline}
+                  gpu-draw)
+        #_{:vertex-count vertex-count
+                  :pipeline (-> ctx :pipeline :mesh)
+                  :bindings [camera-uniform
+                             vertex-buffer
+                             normal-buffer
+                             model-uniform
+                             
+                             ]}]
+    (doseq [[buffer data] (:data gpu-draw)]
+      (wgpu/copy-to-buffer gpu-context
+                           buffer
+                           data))
+    [ctx gpu-draw]))
+
 (defn draw! [ctx scene] 
   (let [gpu-context (:gpu-context ctx)
         camera-uniform (-> ctx :uniform :camera)
@@ -749,10 +813,7 @@
                                           mf/get-mesh)
                                 :model-matrix
                                 (mat/mmul
-                                 (mutil/translate 0 3 -10)
-                                 ;; (mutil/rotate 1 0 0)
-                                 #_(normalize-object-mat verts)
-                                 )}
+                                 (mutil/translate 0 3 -10))}
                                {:id [:mesh 2]
                                 :type :mesh
                                 :mesh (-> (mf/difference (mf/cylinder 3 1 1 100 true)
@@ -808,6 +869,145 @@
 
     (prn "done")
     (shutdown-agents)))
+
+
+(defn check-draw-shader [_]
+  (let [width 441
+        height 517
+        ctx (init! {:width width :height height})
+        
+
+        pm* (volatile! (ctx->pixmap ctx nil))
+        ctx* (volatile! ctx)
+        camera* (volatile! 
+                 (mat/mmul
+                  (mutil/perspective-fov
+                   (/ (* Math/PI 45) 180)
+                   
+                   (/ width height)
+                   0.1
+                   1000)
+                  (mat/inverse
+                   (mat/mmul 
+                    (mutil/translate 0 10 0)
+                    (mutil/rotate (/ Math/PI -8)
+                                  0
+                                  0)))))
+        sphere-mat* (volatile! (mutil/translate 0 0 -10))
+        
+        verts (dtype/make-container :native-heap
+                                    :float32 
+                                    [-1 -1 0 
+                                     1 -1 0
+                                     -1 1 0
+                                     
+                                     
+                                     -1 1 0 
+                                     1 -1 0
+                                     1 1 0
+                                     ])
+        camera-inverse-buf (dtype/make-container :native-heap
+                                                 :float32 
+                                                 (into []
+                                                       cat
+                                                       (mat/transpose
+                                                        @camera*)))
+
+        my-draw {:id (random-uuid)
+                 :type :render-shader
+                 :bindings {:verts {:type :buffer
+                                    :opts {:usage #{:Storage :CopyDst}
+                                           :type :f32
+                                           :length (count verts)}
+                                    :data verts}
+                            :camera-inverse {:type :buffer
+                                             :opts {:usage #{:Uniform
+                                                             :CopyDst}
+                                                    :type :f32
+                                                    :length 16}}}
+                 
+                 :drawf (fn [ctx bindings]
+                          {:vertex-count 6
+                           :data {(:camera-inverse bindings)
+                                  (dtype/copy! 
+                                   (into []
+                                         cat
+                                         (mat/transpose
+                                          (mat/inverse
+                                           @camera*)))
+                                   #_(into []
+                                         cat
+                                         (mat/transpose
+                                          (mat/inverse
+                                           (mutil/perspective-fov
+                                            (/ (* Math/PI 45) 180)
+                                            
+                                            (/ width height)
+                                            0.1
+                                            1000))))
+                                   camera-inverse-buf)}
+                           :bindings [(-> ctx :uniform :camera)
+                                      (:camera-inverse bindings)
+                                      (:verts bindings)]})
+                 :shader {:resource "../clj-webgpu/shaders/grid.wgsl"}}
+        
+        view-fn (fn []
+                  (time
+                   (do
+                     (vswap! ctx* draw!
+                             {:camera @camera*
+                              :draw 
+                              [
+                               {:id [:mesh 1]
+                                :type :mesh
+                                :mesh (-> (mf/sphere 1 100)
+                                          mf/get-mesh)
+                                :model-matrix @sphere-mat*
+                                }
+                               my-draw
+                               
+                               ]})
+                     (let [pm (vreset! pm* (ctx->pixmap @ctx* @pm*))]
+                       (ui/on
+                        :key-press
+                        (fn [s]
+                          (prn s)
+                          (let [dist 0.12]
+                            (case s
+                              ("w" :kp_8) (vswap! sphere-mat* #(mat/mmul 
+                                                            %
+                                                            (mutil/translate 0 dist 0)
+                                                                ))
+                              ("s" :kp_2) (vswap! sphere-mat* #(mat/mmul 
+                                                            %
+                                                            (mutil/translate 0 (- dist) 0)))
+
+                              :left (vswap! sphere-mat* #(mat/mmul 
+                                                      %
+                                                      (mutil/translate (- dist) 0 0)
+                                                      ))
+                              :right (vswap! sphere-mat* #(mat/mmul
+                                                       %
+                                                       (mutil/translate dist 0 0)
+                                                       ))
+                              :up (vswap! sphere-mat* #(mat/mmul 
+                                                    %
+                                                        (mutil/translate 0 0 dist)))
+                              :down (vswap! sphere-mat* #(mat/mmul 
+                                                      %
+                                                      (mutil/translate 0 0 (- dist)  )))
+                              nil)))
+                        pm)))))]
+    (skia/run-sync view-fn
+                   {:window-start-width width
+                    :window-start-height height})
+
+    (prn "done")
+    (System/exit 0)))
+
+
+
+
 
 
 
