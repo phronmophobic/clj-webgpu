@@ -662,17 +662,20 @@
                 buffers
                 (into {}
                       (map (fn [[k {:keys [type opts] :as m}]]
-                             (case type
-                               :sampler (wgpu/create-sampler gpu-context)
-
-                               :buffer
-                               (let [buffer (wgpu/create-buffer gpu-context
-                                                                opts)]
-                                 (when-let [data (:data m)]
-                                   (wgpu/copy-to-buffer gpu-context
-                                                        buffer
-                                                        data))
-                                 [k buffer]))))
+                             [k (case type
+                                  :sampler (wgpu/create-sampler gpu-context)
+                                  
+                                  :texture (wgpu/load-texture gpu-context
+                                                              (:view m))
+                                  
+                                  :buffer
+                                  (let [buffer (wgpu/create-buffer gpu-context
+                                                                   opts)]
+                                    (when-let [data (:data m)]
+                                      (wgpu/copy-to-buffer gpu-context
+                                                           buffer
+                                                           data))
+                                    buffer))]))
                       bindings)
                 
                 pipeline
