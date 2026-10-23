@@ -704,17 +704,50 @@
                            data))
     [ctx gpu-draw]))
 
+(defn camera-map->matrix [{:keys [rotate translate]} width height]
+  (let [mat (mat/mmul
+             (mutil/perspective-fov
+              (/ (* Math/PI 45) 180)
+              (/ width height)
+              0.1
+              1000)
+             (mat/inverse
+              (mat/mmul
+               (let [x (get translate :x 0)
+                     y (get translate :y 0)
+                     z (get translate :z 0)]
+                 (mutil/translate x y z))
+               (let [x (get rotate :x 0)
+                     y (get rotate :y 0)
+                     z (get rotate :z 0)]
+                 (mutil/rotate x (+ y Math/PI) z)))))]
+    mat))
+
 (defn draw! [ctx scene] 
   (let [gpu-context (:gpu-context ctx)
         camera-uniform (-> ctx :uniform :camera)
+        
+        [ctx camera-buf] (if-let [camera-buf (:camera-buf ctx)]
+                           [ctx camera-buf]
+                           (let [camera-buf (dtype/make-container :native-heap
+                                                                  :float32 
+                                                                  16)]
+                             [(assoc ctx :camera-buf camera-buf)
+                              camera-buf]))
+        
+        
+        ctx (assoc ctx :camera (:camera scene))
+
         _ (wgpu/copy-to-buffer gpu-context
                                camera-uniform
-                               (dtype/make-container :native-heap
-                                                     :float32 
-                                                     (into []
-                                                           cat
-                                                           (mat/transpose
-                                                            (:camera scene)))))
+                               (dtype/copy! 
+                                (let [mat (camera-map->matrix (:camera scene)
+                                                              (:width ctx)
+                                                              (:height ctx))]
+                                  (into []
+                                        cat
+                                        (mat/transpose mat)))
+                                camera-buf))
 
         
         [ctx gpu-draws]
@@ -747,9 +780,7 @@
 
         ctx (draw! 
              ctx
-             {:camera (mat/mmul
-                       (mutil/perspective-fov (* 1/2 Math/PI) 1 0.1 20)
-                       (mutil/translate 0 0 -1))
+             {:camera {:translate {:z -1}}
               :draw 
               (into []
                     (map (fn [i]
@@ -783,15 +814,10 @@
         pm* (volatile! (ctx->pixmap ctx nil))
         ctx* (volatile! ctx)
         camera* (volatile! 
-                 (#_mutil/perspective-fov3-reverseZ
-                  mutil/perspective-fov
-                   (/ (* Math/PI 45) 180)
-                   
-                   (/ width height)
-                   0.1
-                   1000)
-                            
-                            #_(mutil/translate 0 0 -1))
+                 {:rotate {:y Math/PI}
+                  :translate {:x 0
+                              :y 0
+                              :z -1}})
         view-fn (fn []
                   (time
                    (do
@@ -821,12 +847,7 @@
                                           mf/get-mesh)
                                 :model-matrix
                                 (mat/mmul
-                                 (mutil/translate -3 0 -10)
-                                 ;; (mutil/rotate 1 0 0)
-                                 #_(normalize-object-mat verts)
-                                 )}]
-                                    
-                                    })
+                                 (mutil/translate -3 0 -10))}]})
                      (let [pm (vreset! pm* (ctx->pixmap @ctx* @pm*))]
                        (ui/on
                         :key-press
@@ -834,32 +855,13 @@
                           (prn s)
                           (let [dist 0.12]
                             (case s
-                              ("w" :kp_8) (vswap! camera* #(mat/mmul 
-                                                            %
-                                                            (mutil/translate 0 dist 0)
-                                                      ))
-                              ("s" :kp_2) (vswap! camera* #(mat/mmul 
-                                                            %
-                                                            (mutil/translate 0 (- dist) 0)))
-
-                              :left (vswap! camera* #(mat/mmul 
-                                                      %
-                                                      (mutil/translate (- dist) 0 0)
-                                                      ))
-                              :right (vswap! camera* #(mat/mmul
-                                                       %
-                                                       (mutil/translate dist 0 0)
-                                                       ))
-                              :up (vswap! camera* #(mat/mmul 
-                                                    %
-                                                    (mutil/translate 0 0 dist)
-                                                    
-                                                    ))
-                              :down (vswap! camera* #(mat/mmul 
-                                                      %
-                                                      (mutil/translate 0 0 (- dist))
-                                                      
-                                                      ))
+                              ("w" :kp_8) (vswap! camera* update-in [:translate :z] - dist)
+                              ("s" :kp_2) (vswap! camera* update-in [:translate :z] + dist)
+                              
+                              :left (vswap! camera* update-in [:translate :x] - dist)
+                              :right (vswap! camera* update-in [:translate :x] + dist)
+                              :up (vswap! camera* update-in [:translate :y] + dist)
+                              :down (vswap! camera* update-in [:translate :y] - dist)
                               nil)))
                         pm)))))
         ]
@@ -880,19 +882,11 @@
         pm* (volatile! (ctx->pixmap ctx nil))
         ctx* (volatile! ctx)
         camera* (volatile! 
-                 (mat/mmul
-                  (mutil/perspective-fov
-                   (/ (* Math/PI 45) 180)
-                   
-                   (/ width height)
-                   0.1
-                   1000)
-                  (mat/inverse
-                   (mat/mmul 
-                    (mutil/translate 0 10 0)
-                    (mutil/rotate (/ Math/PI -8)
-                                  0
-                                  0)))))
+                 {:translate {:x 0
+                              :y 10
+                              :z 0}
+                  :rotate {:y Math/PI
+                           :x (/ Math/PI -8)}})
         sphere-mat* (volatile! (mutil/translate 0 0 -10))
         
         verts (dtype/make-container :native-heap
@@ -908,10 +902,7 @@
                                      ])
         camera-inverse-buf (dtype/make-container :native-heap
                                                  :float32 
-                                                 (into []
-                                                       cat
-                                                       (mat/transpose
-                                                        @camera*)))
+                                                 16)
 
         my-draw {:id (random-uuid)
                  :type :render-shader
@@ -934,17 +925,9 @@
                                          cat
                                          (mat/transpose
                                           (mat/inverse
-                                           @camera*)))
-                                   #_(into []
-                                         cat
-                                         (mat/transpose
-                                          (mat/inverse
-                                           (mutil/perspective-fov
-                                            (/ (* Math/PI 45) 180)
-                                            
-                                            (/ width height)
-                                            0.1
-                                            1000))))
+                                           (camera-map->matrix (:camera ctx)
+                                                               (:width ctx)
+                                                               (:height ctx)))))
                                    camera-inverse-buf)}
                            :bindings [(-> ctx :uniform :camera)
                                       (:camera-inverse bindings)
