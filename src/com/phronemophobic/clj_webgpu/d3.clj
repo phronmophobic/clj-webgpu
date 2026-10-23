@@ -997,3 +997,140 @@
 
 
 
+
+
+
+
+(defn check-draw-texture [_]
+  (let [width 441
+        height 517
+        ctx (init! {:width width :height height})
+        
+        my-mesh (-> (mf/sphere 1 100)
+                    mf/get-mesh)
+        verts (dtype/make-container 
+               :native-heap :float32
+               (mesh->verts my-mesh))
+        normals (dtype/make-container 
+                 :native-heap :float32
+                 (mesh->normals my-mesh))
+
+        pm* (volatile! (ctx->pixmap ctx nil))
+        ctx* (volatile! ctx)
+        camera* (volatile! 
+                 {:rotate {:y Math/PI}
+                  :translate {:x 0
+                              :y 0
+                              :z -1}})
+        
+        
+
+        draw-texture {:id (random-uuid)
+                      :type :render-shader
+                      :bindings {:texture {:type :texture
+                                           :view 
+                                           #_(ui/image "/Users/adrian/workspace/clj-media/Clojure_logo.png")
+                                           (ui/label (slurp "deps.edn"))}
+                                 :model-matrix {:type :buffer
+                                                :opts {:usage #{:Uniform
+                                                                :CopyDst}
+                                                       :type :f32
+                                                       :length 16}
+                                                :data (dtype/make-container :native-heap
+                                                                            :float32 
+                                                                            (into []
+                                                                                  cat
+                                                                                  (mat/transpose
+                                                                                   (mutil/translate
+                                                                                    0 0 -10))))}
+                                 :sampler {:type :sampler}
+                                 :verts {:type :buffer
+                                         :opts {:usage #{:Storage :CopyDst}
+                                                :type :f32
+                                                :length (count verts)}
+                                         :data verts}
+                                 :normals {:type :buffer
+                                           :opts {:usage #{:Storage :CopyDst}
+                                                  :type :f32
+                                                  :length (count normals)}
+                                           :data normals}}
+                      
+                      :drawf (fn [ctx bindings]
+                               {:vertex-count (quot (count verts) 3)
+                                :bindings [(-> ctx :uniform :camera)
+                                           (:model-matrix bindings)
+                                           (:verts bindings)
+                                           (:normals bindings)
+                                           (:texture bindings)
+                                           (:sampler bindings)]})
+                      :shader {:resource "../clj-webgpu/shaders/texturetest.wgsl"}}
+        draw-texture2 {:id (random-uuid)
+                      :type :render-shader
+                      :bindings {:texture {:type :texture
+                                           :view 
+                                           (ui/image "/Users/adrian/workspace/clj-media/Clojure_logo.png")}
+                                 :model-matrix {:type :buffer
+                                                :opts {:usage #{:Uniform
+                                                                :CopyDst}
+                                                       :type :f32
+                                                       :length 16}
+                                                :data (dtype/make-container :native-heap
+                                                                            :float32 
+                                                                            (into []
+                                                                                  cat
+                                                                                  (mat/transpose
+                                                                                   (mutil/translate
+                                                                                    0 2 -10))))}
+                                 :sampler {:type :sampler}
+                                 :verts {:type :buffer
+                                         :opts {:usage #{:Storage :CopyDst}
+                                                :type :f32
+                                                :length (count verts)}
+                                         :data verts}
+                                 :normals {:type :buffer
+                                           :opts {:usage #{:Storage :CopyDst}
+                                                  :type :f32
+                                                  :length (count normals)}
+                                           :data normals}}
+                      
+                      :drawf (fn [ctx bindings]
+                               {:vertex-count (quot (count verts) 3)
+                                :bindings [(-> ctx :uniform :camera)
+                                           (:model-matrix bindings)
+                                           (:verts bindings)
+                                           (:normals bindings)
+                                           (:texture bindings)
+                                           (:sampler bindings)]})
+                      :shader {:resource "../clj-webgpu/shaders/texturetest.wgsl"}}
+
+        view-fn (fn []
+                  (time
+                   (do
+                     (vswap! ctx* draw!
+                             {:camera @camera*
+                              :draw 
+                              [draw-texture
+                               draw-texture2]})
+                     (let [pm (vreset! pm* (ctx->pixmap @ctx* @pm*))]
+                       (ui/on
+                        :key-press
+                        (fn [s]
+                          (prn s)
+                          (let [dist 0.12]
+                            (case s
+                              ("w" :kp_8) (vswap! camera* update-in [:translate :z] - dist)
+                              ("s" :kp_2) (vswap! camera* update-in [:translate :z] + dist)
+                              
+                              :left (vswap! camera* update-in [:translate :x] - dist)
+                              :right (vswap! camera* update-in [:translate :x] + dist)
+                              :up (vswap! camera* update-in [:translate :y] + dist)
+                              :down (vswap! camera* update-in [:translate :y] - dist)
+                              nil)))
+                        pm)))))
+        ]
+    (skia/run-sync view-fn
+                   {:window-start-width width
+                    :window-start-height height})
+
+    (prn "done")
+    (shutdown-agents)))
