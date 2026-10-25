@@ -744,9 +744,13 @@
                gpu-draws []]
           (if (not draws)
             [ctx gpu-draws]
-            (let [draw (first draws)
-                  [ctx gpu-draw] (prep-draw ctx draw)]
-              (recur ctx (next draws) (conj gpu-draws gpu-draw)))))
+            (let [draw (first draws)]
+              (if draw
+                (let [[ctx gpu-draw] (prep-draw ctx draw)]
+                  (recur ctx (next draws) (conj gpu-draws gpu-draw)))
+                ;; draw is nil
+                ;; continue
+                (recur ctx (next draws) gpu-draws)))))
         
         draw-pass {:render-pass (:render-pass ctx)
                    :draws gpu-draws}]
