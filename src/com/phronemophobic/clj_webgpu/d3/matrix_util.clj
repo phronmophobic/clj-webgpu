@@ -46,3 +46,47 @@
    [0 (/ 2 (- top bottom)) 0 0]
    [0 0 (/ 1 (- near far)) 0]
    [(/ (+ right left) (- left right)) (/ (+ top bottom) (- bottom top)) (/ near (- near far)) 1]])
+
+(defn transform-mat3 [vec3 mat4]
+  (let [mat3 (mat/select mat4
+                         :butlast
+                         :butlast
+                         :butlast)]
+    (mat/mmul 
+     mat3
+     vec3)))
+
+(defmulti ->matrix :type)
+
+(defmethod ->matrix :projection/perspective [m]
+  (mat/mmul
+   (perspective-fov
+    (get m :fovy (/ (* Math/PI 45) 180))
+    (if-let [aspect-ratio (:aspect-ratio m)]
+      aspect-ratio
+      (/ (:width m)
+         (:height m)))
+    (get m :near-plane 0.1)
+    (get m :far-plane 1000))
+   (mat/inverse
+    (rotate 0 Math/PI 0))))
+
+
+
+(defmethod ->matrix :camera/first-person [{{rx :x
+                                            ry :y
+                                            rz :z
+                                            :or {rx 0
+                                                 ry 0
+                                                 rz 0}} :rotate
+                                           {tx :x
+                                            ty :y
+                                            tz :z
+                                            :or {tx 0
+                                                 ty 0
+                                                 tz 0}} :translate}]
+  (mat/mmul
+   (translate tx ty tz)
+   (rotate rx ry rz)))
+
+

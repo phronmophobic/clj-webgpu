@@ -22,7 +22,6 @@
            )
   (:gen-class))
 
-(defmulti ->matrix :type)
 
 (defn mesh->verts [mesh]
   (let [pos (.vertProperties mesh)
@@ -707,34 +706,6 @@
                            data))
     [ctx gpu-draw]))
 
-(defn camera-map->matrix [{:keys [rotate translate]} ;;width height
-                          ]
-  (mat/mmul
-   (let [x (get translate :x 0)
-         y (get translate :y 0)
-         z (get translate :z 0)]
-     (mutil/translate x y z))
-   (let [x (get rotate :x 0)
-         y (get rotate :y 0)
-         z (get rotate :z 0)]
-     (mutil/rotate x y z))))
-
-(defmethod ->matrix :projection/perspective [m]
-  (mat/mmul
-   (mutil/perspective-fov
-    (get m :fovy (/ (* Math/PI 45) 180))
-    (if-let [aspect-ratio (:aspect-ratio m)]
-      aspect-ratio
-      (/ (:width m)
-         (:height m)))
-    (get m :near-plane 0.1)
-    (get m :far-plane 1000))
-   (mat/inverse
-    (mutil/rotate 0 Math/PI 0))))
-
-(defmethod ->matrix :camera/first-person [m]
-  (camera-map->matrix m))
-
 (defn draw! [ctx scene] 
   (let [gpu-context (:gpu-context ctx)
         view+projection-uniform (-> ctx :uniform :view+projection)
@@ -754,8 +725,8 @@
         _ (wgpu/copy-to-buffer gpu-context
                                view+projection-uniform
                                (dtype/copy! 
-                                (let [camera-mat (->matrix (:camera scene))
-                                      projection-mat (->matrix (assoc (:projection scene)
+                                (let [camera-mat (mutil/->matrix (:camera scene))
+                                      projection-mat (mutil/->matrix (assoc (:projection scene)
                                                                       :width (:width ctx)
                                                                       :height (:height ctx)))
                                       mat (mat/mmul
