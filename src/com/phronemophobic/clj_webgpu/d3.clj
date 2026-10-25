@@ -598,6 +598,9 @@
                                                    :length (alength verts)})
                 _ (wgpu/copy-to-buffer gpu-context vertex-buffer (dtype/make-container :native-heap :float32 verts))
                 
+                ;; we should also have a uniform specific to the normals
+                ;; https://webgpufundamentals.org/webgpu/lessons/webgpu-lighting-directional.html
+                ;; jump to "There is one problem which I don’t"
                 normals (mesh->normals mesh)
                 normal-buffer (wgpu/create-buffer gpu-context
                                                   {:usage #{:Storage :CopyDst}
