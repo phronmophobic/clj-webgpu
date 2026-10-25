@@ -844,21 +844,24 @@
                               :projection {:type :projection/perspective}
                               :draw draws})
                      (let [pm (vreset! pm* (ctx->pixmap @ctx* @pm*))]
-                       (ui/on
-                        :key-press
-                        (fn [s]
-                          (prn s)
-                          (let [dist 0.12]
-                            (case s
-                              ("w" :kp_8) (vswap! camera* update-in [:translate :z] - dist)
-                              ("s" :kp_2) (vswap! camera* update-in [:translate :z] + dist)
-                              
-                              :left (vswap! camera* update-in [:translate :x] - dist)
-                              :right (vswap! camera* update-in [:translate :x] + dist)
-                              :up (vswap! camera* update-in [:translate :y] + dist)
-                              :down (vswap! camera* update-in [:translate :y] - dist)
-                              nil)))
-                        pm)))))
+                       [(ui/on
+                         :key-press
+                         (fn [s]
+                           (prn s)
+                           (let [dist 5]
+                             (case s
+                               ("w" :kp_8) (vswap! camera* update-in [:translate :z] - dist)
+                               ("s" :kp_2) (vswap! camera* update-in [:translate :z] + dist)
+                               
+                               :left (vswap! camera* update-in [:translate :x] - dist)
+                               :right (vswap! camera* update-in [:translate :x] + dist)
+                               :up (vswap! camera* update-in [:translate :y] + dist)
+                               :down (vswap! camera* update-in [:translate :y] - dist)
+                               nil)))
+                         pm)
+                        (ui/translate
+                         10 50
+                         (ui/label (pr-str @camera*)))]))))
         ]
 
     (skia/run-sync view-fn
@@ -922,8 +925,8 @@
                                          cat
                                          (mat/transpose
                                           (mat/inverse
-                                           (let [camera-mat (->matrix (:camera ctx))
-                                                 projection-mat (->matrix (assoc (:projection ctx)
+                                           (let [camera-mat (mutil/->matrix (:camera ctx))
+                                                 projection-mat (mutil/->matrix (assoc (:projection ctx)
                                                                                  :width (:width ctx)
                                                                                  :height (:height ctx)))
                                                  mat (mat/mmul
