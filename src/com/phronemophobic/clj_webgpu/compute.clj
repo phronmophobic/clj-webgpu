@@ -364,7 +364,9 @@
                       :usage (bit-or raw/WGPUTextureUsage_TextureBinding raw/WGPUTextureUsage_CopyDst)})
         texture (raw/wgpuDeviceCreateTexture device textureDesc)
         _ (clean-ptr texture
-                     raw/wgpuTextureRelease)
+                     (fn [ptr]
+                       (raw/wgpuTextureDestroy ptr)
+                       (raw/wgpuTextureRelease ptr)))
 
         destination (raw/map->WGPUTexelCopyTextureInfo
                      {:texture (.address texture)
@@ -402,7 +404,7 @@
                         :dimension raw/WGPUTextureViewDimension_2D
                         :format (:format textureDesc)}))
         _ (clean-ptr texture-view
-                     raw/wgpuTextureViewRelease)]
+                     raw/wgpuTextureViewRelease [texture])]
     {:texture texture
      :buf buf
      :texture-view texture-view}))
@@ -818,8 +820,8 @@ fn fs_main() -> @location(0) vec4f {
 
        dest))))
 
-(defn create-texture
-    "Creates a texture. Also automatically creates a matching texture view using the same properties as the underlying texture.
+(defn ^:private create-texture
+    "Creates a texture.
 
   The following options are available
   :label A name for the texture. Can be useful for debugging.
@@ -850,11 +852,18 @@ fn fs_main() -> @location(0) vec4f {
         texture (raw/wgpuDeviceCreateTexture
                  (:device ctx)
                  (raw/map->WGPUTextureDescriptor texture-descriptor))]
-    (clean-ptr texture raw/wgpuTextureRelease)
+    ;; there seems to be a hard to reproduce crash
+    ;; if you have a texture view that isn't released
+    ;; right before this texture
+    ;; use create-texture+view instead
+    #_(clean-ptr texture 
+               (fn [ptr]
+                       (raw/wgpuTextureDestroy ptr)
+                       (raw/wgpuTextureRelease ptr)))
     texture))
 
 
-(defn create-texture-view [texture texture-view-descriptor]
+(defn ^:private create-texture-view [texture texture-view-descriptor]
   (let [texture-view-descriptor
         (convert-kws
          texture-view-descriptor
@@ -868,8 +877,28 @@ fn fs_main() -> @location(0) vec4f {
                       (raw/map->WGPUTextureViewDescriptor
                        texture-view-descriptor))
         ]
-    (clean-ptr texture-view raw/wgpuTextureViewRelease [texture])
+    ;; there seems to be a hard to reproduce crash
+    ;; if you have a texture view that isn't released
+    ;; right before the texture 
+    ;; use create-texture+view instead
+    #_(clean-ptr texture-view
+               (fn [ptr]
+                 (raw/wgpuTextureViewRelease ptr))
+                [texture])
     texture-view))
+
+(defn create-texture+view [ctx texture-descriptor texture-view-descriptor]
+  (let [texture (create-texture ctx texture-descriptor)
+        texture-view (create-texture-view texture texture-view-descriptor)]
+    (clean-ptr texture-view
+               (fn [ptr]
+                 (raw/wgpuTextureViewRelease ptr)
+                 (raw/wgpuTextureDestroy texture)
+                 (raw/wgpuTextureRelease texture))
+               [texture])
+    [texture texture-view]))
+
+
 
 (defn poll [device wait?]
   (raw/wgpuDevicePoll device (if wait? 1 0)  nil))

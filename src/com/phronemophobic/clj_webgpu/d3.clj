@@ -229,51 +229,44 @@
         draw-figure-pipeline
         (wgpu/create-render-pipeline ctx
                                      (pipeline-3d  {:fragment-shader {:module shader}
-                                                    :vertex-shader {:module shader}})
-                                     )
-        offscreen-texture (wgpu/create-texture
-                           ctx
-                           {
-                            :dimension :3D
-                            :size {:width width
-                                   :height height
-                                   :depthOrArrayLayers 1}
-                            :format :RGBA8UnormSrgb
-                            :mipLevelCount 1
-                            :sampleCount 1
-                            :usage #{:RenderAttachment :CopySrc}})
+                                                    :vertex-shader {:module shader}}))
+        
+        [offscreen-texture
+         offscreen-texture-view]
+        (wgpu/create-texture+view ctx
+                                  {:dimension :3D
+                                   :size {:width width
+                                          :height height
+                                          :depthOrArrayLayers 1}
+                                   :format :RGBA8UnormSrgb
+                                   :mipLevelCount 1
+                                   :sampleCount 1
+                                   :usage #{:RenderAttachment :CopySrc}}
+                                  {:label "offscreentexture"
+                                   :baseArrayLayer 0
+                                   :arrayLayerCount 1
+                                   :baseMipLevel 0
+                                   :mipLevelCount 1
+                                   :aspect :All})
 
-        offscreen-texture-view (wgpu/create-texture-view
-                                offscreen-texture
-                                {
-                                 :baseArrayLayer 0
-                                 :arrayLayerCount 1
-                                 :baseMipLevel 0
-                                 :mipLevelCount 1
-                                 :aspect :All})
-
-        depth-texture (wgpu/create-texture
-                       ctx
-                       {
-                        :size {:width width
-                               :height height
-                               :depthOrArrayLayers 1}
-                        :mipLevelCount 1
-                        :sampleCount 1
-                        :dimension :2D
-                        :format :Depth24Plus
-                        :usage #{:RenderAttachment}})
-
-        depth-texture-view
-        (wgpu/create-texture-view
-         depth-texture
-         {
-          :aspect :DepthOnly
-          :baseArrayLayer 0
-          :arrayLayerCount 1
-          :baseMipLevel 0
-          :mipLevelCount 1
-          :format :Depth24Plus})
+        [depth-texture
+         depth-texture-view]
+        (wgpu/create-texture+view ctx
+                                  {:size {:width width
+                                          :height height
+                                          :depthOrArrayLayers 1}
+                                   :mipLevelCount 1
+                                   :sampleCount 1
+                                   :dimension :2D
+                                   :format :Depth24Plus
+                                   :usage #{:RenderAttachment}}
+                                  {:label "depth texture"
+                                   :aspect :DepthOnly
+                                   :baseArrayLayer 0
+                                   :arrayLayerCount 1
+                                   :baseMipLevel 0
+                                   :mipLevelCount 1
+                                   :format :Depth24Plus})
 
         model-mat (mat/mmul
                    (apply mutil/rotate rot)
@@ -491,25 +484,24 @@
 
 (defn init! [{:keys [width height] :as ctx}]
   (let [gpu-context (wgpu/create-context)
-        offscreen-texture (wgpu/create-texture
-                           gpu-context
-                           {
-                            :dimension :3D
-                            :size {:width width
-                                   :height height
-                                   :depthOrArrayLayers 1}
-                            :format :RGBA8UnormSrgb
-                            :mipLevelCount 1
-                            :sampleCount 1
-                            :usage #{:RenderAttachment :CopySrc}})
-        offscreen-texture-view (wgpu/create-texture-view
-                                offscreen-texture
-                                {:baseArrayLayer 0
-                                 :arrayLayerCount 1
-                                 :baseMipLevel 0
-                                 :mipLevelCount 1
-                                 :aspect :All})
-        
+
+        [offscreen-texture
+         offscreen-texture-view]
+        (wgpu/create-texture+view gpu-context
+                                  {:dimension :3D
+                                   :size {:width width
+                                          :height height
+                                          :depthOrArrayLayers 1}
+                                   :format :RGBA8UnormSrgb
+                                   :mipLevelCount 1
+                                   :sampleCount 1
+                                   :usage #{:RenderAttachment :CopySrc}}
+                                  {:baseArrayLayer 0
+                                   :arrayLayerCount 1
+                                   :baseMipLevel 0
+                                   :mipLevelCount 1
+                                   :aspect :All})
+
         mesh-shader (wgpu/create-shader gpu-context
                                         {:src 
                                          #_(slurp
@@ -519,28 +511,24 @@
                                           (slurp
                                            "../clj-webgpu/shaders/default2.wgsl"))})
         
-        depth-texture (wgpu/create-texture
-                       gpu-context
-                       {
-                        :size {:width width
-                               :height height
-                               :depthOrArrayLayers 1}
-                        :mipLevelCount 1
-                        :sampleCount 1
-                        :dimension :2D
-                        :format :Depth24Plus
-                        :usage #{:RenderAttachment}})
-
-        depth-texture-view
-        (wgpu/create-texture-view
-         depth-texture
-         {
-          :aspect :DepthOnly
-          :baseArrayLayer 0
-          :arrayLayerCount 1
-          :baseMipLevel 0
-          :mipLevelCount 1
-          :format :Depth24Plus})]
+        [depth-texture
+         depth-texture-view]
+        (wgpu/create-texture+view gpu-context
+                                  {:size {:width width
+                                          :height height
+                                          :depthOrArrayLayers 1}
+                                   :mipLevelCount 1
+                                   :sampleCount 1
+                                   :dimension :2D
+                                   :format :Depth24Plus
+                                   :usage #{:RenderAttachment}}
+                                  {
+                                   :aspect :DepthOnly
+                                   :baseArrayLayer 0
+                                   :arrayLayerCount 1
+                                   :baseMipLevel 0
+                                   :mipLevelCount 1
+                                   :format :Depth24Plus})]
     (merge
      ctx
      {:gpu-context gpu-context
