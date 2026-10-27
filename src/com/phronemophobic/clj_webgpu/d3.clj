@@ -6,7 +6,10 @@
             [clojure.java.io :as io]
 
             
+            [tech.v3.datatype.functional :as dfn]
+            [tech.v3.tensor :as dtt]
             [tech.v3.datatype :as dtype]
+            [tech.v3.datatype.protocols :as dtype-proto]
             [tech.v3.datatype.struct :as dt-struct]
             [tech.v3.datatype.ffi :as dt-ffi]
             [tech.v3.datatype.native-buffer :as native-buffer]
@@ -22,6 +25,7 @@
            )
   (:gen-class))
 
+(declare calc-normals)
 
 (defn mesh->verts [mesh]
   (let [pos (.vertProperties mesh)
@@ -163,6 +167,30 @@
     :maxy Double/NEGATIVE_INFINITY
     :maxz Double/NEGATIVE_INFINITY}
    verts))
+
+(defn extents2
+    "Returns a map with :minx, :miny, :minz, :maxx, :maxy, and :maxz"
+  [mesh]
+  (let [
+        buf (native-buffer/wrap-address 
+             (-> (.vertProperties mesh) .data .address)
+             (* 4 (.size (.vertProperties mesh)))
+             :float32
+             (dtype-proto/platform-endianness)
+             nil)
+        ten (-> (dtt/->tensor buf)
+                (dtt/reshape [(quot (.size (.vertProperties mesh)) 3)
+                              3]))
+        
+        [maxx maxy maxz] (dtt/reduce-axis ten #(apply dfn/max %) 0)
+        [minx miny minz] (dtt/reduce-axis ten #(apply dfn/min %) 0)]
+    {:minx minx
+     :miny miny
+     :minz minz
+     
+     :maxx maxx
+     :maxy maxy
+     :maxz maxz}))
 
 (defn center-camera [verts]
   (let [{:keys [minx miny minz maxx maxy maxz]} (extents verts)
@@ -509,7 +537,7 @@
                                          (shader/preprocess-shader
                                           (io/file "../lygia")
                                           (slurp
-                                           "../clj-webgpu/shaders/default2.wgsl"))})
+                                           "../clj-webgpu/shaders/default3.wgsl"))})
         
         [depth-texture
          depth-texture-view]
@@ -571,30 +599,51 @@
         {:keys [mesh id model-matrix]} draw
         
         {:keys [model-uniform
-                vertex-buffer
-                normal-buffer
+                triverts
+                xyz
+                normals
                 vertex-count]
          :as instance} 
         (if-let [instance (get-in ctx [:instance id])]
           instance
-          (let [verts (if (instance? (class (float-array 0)) mesh)
-                        mesh
-                        (mesh->verts mesh))
-                vertex-buffer (wgpu/create-buffer gpu-context
-                                                  {:usage #{:Storage :CopyDst}
-                                                   :type :f32
-                                                   :length (alength verts)})
-                _ (wgpu/copy-to-buffer gpu-context vertex-buffer (dtype/make-container :native-heap :float32 verts))
+          (let [triverts (.triVerts mesh)
+                triverts-buffer (wgpu/create-buffer gpu-context
+                                             {:usage #{:Storage :CopyDst}
+                                              :type :i32
+                                              :length (.size triverts)})
+
+
+                _ (wgpu/copy-to-buffer gpu-context 
+                                       triverts-buffer
+                                       (native-buffer/wrap-address 
+                                        (-> triverts .data .address)
+                                        (* 4 (.size triverts))))
+
+                xyz (.vertProperties mesh)
+                xyz-buffer (wgpu/create-buffer gpu-context
+                                        {:usage #{:Storage :CopyDst}
+                                         :type :f32
+                                         :length (.size xyz)})
                 
+                _ (wgpu/copy-to-buffer gpu-context
+                                       xyz-buffer
+                                       (native-buffer/wrap-address 
+                                        (-> xyz .data .address)
+                                        (* 4 (.size xyz))))
+                
+
                 ;; we should also have a uniform specific to the normals
                 ;; https://webgpufundamentals.org/webgpu/lessons/webgpu-lighting-directional.html
                 ;; jump to "There is one problem which I don’t"
-                normals (mesh->normals mesh)
-                normal-buffer (wgpu/create-buffer gpu-context
-                                                  {:usage #{:Storage :CopyDst}
-                                                   :type :f32
-                                                   :length (alength normals)})
-                _ (wgpu/copy-to-buffer gpu-context normal-buffer (dtype/make-container :native-heap :float32 normals))
+                normals (calc-normals mesh)
+                normals-buffer (wgpu/create-buffer gpu-context
+                                                   {:usage #{:Storage :CopyDst}
+                                                    :type :f32
+                                                    :length (count normals)})
+                
+                _ (wgpu/copy-to-buffer gpu-context
+                                       normals-buffer
+                                       normals)
                 
                 model-uniform (wgpu/create-buffer gpu-context
                                                   {:usage #{:Uniform
@@ -603,9 +652,10 @@
                                                    :length 16})]
             
             
-            {:vertex-count (quot (alength verts) 3)
-             :vertex-buffer vertex-buffer
-             :normal-buffer normal-buffer
+            {:vertex-count (.size triverts)
+             :triverts triverts-buffer
+             :normals normals-buffer
+             :xyz xyz-buffer
              :model-uniform model-uniform}))
         ctx (assoc-in ctx [:instance id] instance)
         
@@ -624,11 +674,10 @@
         gpu-draw {:vertex-count vertex-count
                   :pipeline (-> ctx :pipeline :mesh)
                   :bindings [view+projection-uniform
-                             vertex-buffer
-                             normal-buffer
-                             model-uniform
-                             
-                             ]}]
+                             triverts
+                             xyz
+                             normals
+                             model-uniform]}]
     [ctx gpu-draw]))
 
 (defmethod prep-draw :render-shader [ctx draw]
@@ -758,12 +807,14 @@
 (defn check-draw [_]
   (let [ctx (init! {:width 640 :height 640})
         
-        my-mesh (mf/import-mesh "/Users/adrian/Downloads/Klein_Smoother_no_base.STL")
-        verts (mesh->verts my-mesh)
+        my-mesh
+        (-> (mf/cube [1 1 1 ] true)
+                    (mf/get-mesh))
+        #_(mf/import-mesh "/Users/adrian/Downloads/Klein_Smoother_no_base.STL")
 
         ctx (draw! 
              ctx
-             {:camera {:translate {:z -1}
+             {:camera {:translate {:z 10}
                        :type :camera/first-person}
               :projection {:type :projection/perspective}
               :draw 
@@ -772,13 +823,13 @@
                            {:id (random-uuid)
                             :type :mesh
                             :mesh my-mesh
-                            :model-matrix
+                            #_#_:model-matrix
                             (mat/mmul
                              (mutil/translate i 0 (* 2 i))
                              (mutil/rotate 1 0 0)
                              (normalize-object-mat verts)
                              )}))
-                    (range 10))})
+                    (range 1))})
         
         pm (ctx->pixmap ctx nil)]
     (skia/save-image "woohoo.png" pm)
@@ -800,7 +851,7 @@
         ctx* (volatile! ctx)
         camera* (volatile! 
                  {:type :camera/first-person
-                  :rotate {:y Math/PI}
+                  ;; :rotate {:y Math/PI}
                   :translate {:x 0
                               :y 0
                               :z -1}})
@@ -836,7 +887,7 @@
                          :key-press
                          (fn [s]
                            (prn s)
-                           (let [dist 5]
+                           (let [dist 0.1]
                              (case s
                                ("w" :kp_8) (vswap! camera* update-in [:translate :z] - dist)
                                ("s" :kp_2) (vswap! camera* update-in [:translate :z] + dist)
@@ -873,7 +924,7 @@
                   :translate {:x 0
                               :y 5
                               :z 0}
-                  :rotate {:y Math/PI
+                  :rotate {;; :y Math/PI
                            :x (/ Math/PI 8)}})
         sphere-mat* (volatile! (mutil/translate 0 0 -10))
         
@@ -998,7 +1049,8 @@
         ctx* (volatile! ctx)
         camera* (volatile! 
                  {:type :camera/first-person
-                  :rotate {:y Math/PI}
+                  :rotate {;; :y Math/PI
+                           }
                   :translate {:x 0
                               :y 0
                               :z -1}})
@@ -1113,3 +1165,95 @@
 
     (prn "done")
     (shutdown-agents)))
+
+
+(defn calc-normals [mesh]
+  
+   (let [
+         
+         ctx (wgpu/create-context)
+         
+         shader (wgpu/create-shader ctx {:src (slurp "../clj-webgpu/shaders/calcnormal.wgsl")})
+         pipeline
+         (wgpu/create-compute-pipeline  ctx
+                                        {:shader shader})
+         
+         
+         triverts (.triVerts mesh)
+         triverts-buffer (wgpu/create-buffer ctx {:usage #{:Storage
+                                                           :CopyDst
+                                                           :CopySrc}
+                                                  :type :i32
+                                                  :length (.size triverts)})
+         _ (wgpu/copy-to-buffer ctx
+                                triverts-buffer
+                                (native-buffer/wrap-address 
+                                 (-> triverts .data .address)
+                                 (* 4 (.size triverts))))
+         
+         xyz (.vertProperties mesh)
+         xyz-buffer (wgpu/create-buffer ctx {:usage #{:Storage
+                                                      :CopyDst
+                                                      :CopySrc}
+                                             :type :f32
+                                             :length (.size xyz)})
+         _ (wgpu/copy-to-buffer ctx
+                                xyz-buffer
+                                (native-buffer/wrap-address 
+                                 (-> xyz .data .address)
+                                 (* 4 (.size xyz))))
+
+         length-storage (wgpu/create-buffer ctx {:usage #{:Storage
+                                                          :CopyDst
+                                                          :CopySrc}
+                                                 :type :i32
+                                                 :length 1})
+         _ (wgpu/copy-to-buffer ctx
+                                length-storage
+                                (dtype/make-container
+                                 :native-heap
+                                 :int32 [(.size triverts)]))
+         
+         output (wgpu/create-buffer ctx {:usage #{:Storage
+                                                  :CopyDst
+                                                  :CopySrc}
+                                         :type :f32
+                                         :length (.size triverts)})
+         
+         staging (wgpu/create-buffer ctx {:usage #{:MapRead
+                                                   :CopyDst}
+                                          :type :f32
+                                          :length (.size triverts)})
+         
+         workgroup-size 256 
+         _ (wgpu/submit
+            ctx
+            [{:compute-pass true
+              :pipeline pipeline
+              :dispatch-work-groups {:x (long (Math/ceil (/ (.size triverts)
+                                                            256)))}
+              :bind-groups [[triverts-buffer xyz-buffer length-storage output]]}
+             {:copy-pass true
+              :source output
+              :destination staging}])
+ 
+         
+         ;; wait for queue to 
+         _ (wgpu/poll (:device ctx) true)
+         
+         result (wgpu/copy-from-buffer ctx staging (dtype/make-container
+                                                    :native-heap :float32 (.size triverts)))]
+  
+     result))
+
+(defn check-calc-normals [_]
+  (let [mesh (mf/import-mesh "/Users/adrian/Downloads/Klein_Smoother_no_base.STL")]
+    (prn (count (time (calc-normals mesh))))
+    (prn "done")))
+
+
+
+
+
+
+
