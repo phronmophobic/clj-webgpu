@@ -24,20 +24,34 @@
 (defonce ^:private cleaner
   (delay (Cleaner/create)))
 
+(defonce ^:private clean-queue*
+  (atom clojure.lang.PersistentQueue/EMPTY))
+
+
+(defn run-clean-queue! []
+  (let [[q _] (reset-vals! clean-queue* clojure.lang.PersistentQueue/EMPTY)]
+    (doseq [f q]
+      (f))))
+
+
+;; We no longer free resources directly
+;; so that library users can ensure that
+;; resources are only being use from a single thread.
 (defn ^:private clean-ptr
   ([^Pointer ptr f]
    (clean-ptr ptr f nil))
   ([^Pointer ptr f refs]
    (let [address (.address ptr)
-         refs* (volatile! (set refs))]
-     (tech.v3.resource/track ptr
-                             {:track-type :gc
-                              :dispose-fn
-                              (fn []
-                                
-                                (f (Pointer/new address))
-                                (vreset! refs* nil))})
-     ptr)) )
+           refs* (volatile! (set refs))]
+       (tech.v3.resource/track ptr
+                               {:track-type :gc
+                                :dispose-fn
+                                (fn []
+                                  (swap! clean-queue* conj
+                                         (fn []
+                                           (f (Pointer/new address))))
+                                  (vreset! refs* nil))})
+       ptr)) )
 
 
 #_(defn ^:private deep-merge
