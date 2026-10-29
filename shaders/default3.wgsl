@@ -45,7 +45,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> OurVertexShaderOutput {
 @fragment
 fn fs_main(fsInput: OurVertexShaderOutput) -> @location(0) vec4f {
 
-    var color = vec4f(0.0, 1.0, 0.0, 1.0);
+    var color = vec4f(0.0, 0.8, 0.0, 1.0);
 
 //    var lightFactor = 1.0;
 
