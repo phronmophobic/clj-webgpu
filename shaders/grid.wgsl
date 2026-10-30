@@ -28,7 +28,7 @@ fn intersect_segment_plane(a: vec3f, b: vec3f, p0: vec3f, n_unit: vec3f) -> Inte
 
 @group(0) @binding(0) var<uniform> camera_matrix: mat4x4f; // Uniforms;
 @group(0) @binding(1) var<uniform> inverse_camera_matrix: mat4x4f; // Uniforms;
-@group(0) @binding(2) var<storage, read> verts: array<f32>;
+@group(0) @binding(2) var<uniform> gridSize: f32;
 
   struct MyVSOutput {
     @builtin(position) pos: vec4f,
@@ -48,17 +48,17 @@ fn vs_main(@builtin(vertex_index) vidx: u32) ->  MyVSOutput {
     var i = vidx*3u;
 
     let quadPos = array(
-      vec2f(0, 0),
-      vec2f(1, 0),
-      vec2f(0, 1),
-      vec2f(0, 1),
-      vec2f(1, 0),
-      vec2f(1, 1),
+      vec2f(-1, -1),
+      vec2f( 1, -1),
+      vec2f(-1,  1),
+      vec2f(-1,  1),
+      vec2f( 1, -1),
+      vec2f( 1,  1),
     );
 
     var vsOut: MyVSOutput;
     
-    vsOut.pos = vec4f(verts[i], verts[i+1], verts[i+2], 1);
+    vsOut.pos = vec4f(quadPos[vidx],0 , 1);
     vsOut.pos2 = vsOut.pos.xyz;
     
     return vsOut;
@@ -73,34 +73,33 @@ fn fs_main(fsInput: MyVSOutput) -> FSOutput {
     var p = intersect_segment_plane(p0.xyz/ p0.w, p1.xyz/ p1.w, vec3f(0,0,0), vec3f(0,1,0));
     
     if (!p.valid ){ 
-        out.depth = 10;
-        out.color = vec4f(0);
-        return out;
-
+        discard;
     }
     
-    let width = 0.03;
+    let lineWidth = 0.03;
 
     let pclipspace = camera_matrix* p.pos;
     out.depth =  (pclipspace.z/ pclipspace.w);
 
-    let onXAxis = abs(p.pos.x) < width;
-    if ( onXAxis ){
-        out.color = vec4f(0, 0, 0, 1 - abs(p.pos.x)/width);
-        return out;
-    }    
-    let onZAxis = abs(p.pos.z) < width;
-    if ( onZAxis ){
-        out.color = vec4f(0, 0, 0, 1 - abs(p.pos.z)/width);
-        return out;
-    }    
-
-
-    let onLineX = abs(p.pos.x % 1) < width || abs(p.pos.x % 1) > 1 - width;
-    let onLineZ = abs(p.pos.z % 1) < width || abs(p.pos.z % 1) > 1 - width;
-
-    out.color = vec4f(0.5, 0.5, 0.5, select(0.0, 1.0, onLineX || onLineZ));
+    let uv = p.pos.xz/gridSize;
     
+    // largely based on https://bgolus.medium.com/the-best-darn-grid-shader-yet-727f9278b9d8
+    let uvDeriv : vec2f = fwidth(uv);
+
+    let drawWidth : vec2f = clamp(vec2f(lineWidth), uvDeriv, vec2f(0.5)); //
+    let lineAA :vec2f = uvDeriv * 1.5;
+    let gridUV :vec2f = 1.0 - abs(fract(uv) * 2.0 - 1.0);
+    var grid2 :vec2f = smoothstep(drawWidth + lineAA, drawWidth - lineAA, gridUV);
+
+    grid2 *= saturate(lineWidth / drawWidth);
+    var grid :f32 = mix(grid2.x, 1.0, grid2.y);
+
+    let fadeThreshold = 0.5;
+    let fadeFactor = 1.0 - smoothstep( 0, fadeThreshold, max(uvDeriv.x, uvDeriv.y));
+
+    out.color = vec4f(0.5, 0.5, 0.5, grid*fadeFactor);
+
+
     return out;
 
 }

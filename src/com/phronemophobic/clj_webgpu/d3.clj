@@ -925,36 +925,31 @@
                               :y 5
                               :z 0}
                   :rotate {;; :y Math/PI
-                           :x (/ Math/PI 8)}})
+                           :y 0
+                           :z 0
+                           :x (/ Math/PI -8)}})
         sphere-mat* (volatile! (mutil/translate 0 0 -10))
         
-        verts (dtype/make-container :native-heap
-                                    :float32 
-                                    [-1 -1 0 
-                                     1 -1 0
-                                     -1 1 0
-                                     
-                                     
-                                     -1 1 0 
-                                     1 -1 0
-                                     1 1 0
-                                     ])
         camera-inverse-buf (dtype/make-container :native-heap
                                                  :float32 
                                                  16)
+        grid-size-buf (dtype/make-container :native-heap
+                                            :float32 
+                                            [1.0])
 
         my-draw {:id (random-uuid)
                  :type :render-shader
-                 :bindings {:verts {:type :buffer
-                                    :opts {:usage #{:Storage :CopyDst}
-                                           :type :f32
-                                           :length (count verts)}
-                                    :data verts}
-                            :camera-inverse {:type :buffer
+                 :bindings {:camera-inverse {:type :buffer
                                              :opts {:usage #{:Uniform
                                                              :CopyDst}
                                                     :type :f32
-                                                    :length 16}}}
+                                                    :length 16}}
+                            :grid-size {:type :buffer
+                                        :opts {:usage #{:Uniform
+                                                        :CopyDst}
+                                               :type :f32
+                                               :length 1}
+                                        :data grid-size-buf}}
                  
                  :drawf (fn [ctx bindings]
                           {:vertex-count 6
@@ -975,11 +970,11 @@
                                    camera-inverse-buf)}
                            :bindings [(-> ctx :uniform :view+projection)
                                       (:camera-inverse bindings)
-                                      (:verts bindings)]})
+                                      (:grid-size bindings)]})
                  :shader {:resource "../clj-webgpu/shaders/grid.wgsl"}}
         
         view-fn (fn []
-                  (time
+                  (do ;; time
                    (do
                      (vswap! ctx* draw!
                              {:camera @camera*
@@ -996,31 +991,19 @@
                        (ui/on
                         :key-press
                         (fn [s]
-                          (prn s)
+                          ;; (prn s)
                           (let [dist 0.12]
                             (case s
-                              ("w" :kp_8) (vswap! sphere-mat* #(mat/mmul 
-                                                            %
-                                                            (mutil/translate 0 dist 0)
-                                                                ))
-                              ("s" :kp_2) (vswap! sphere-mat* #(mat/mmul 
-                                                            %
-                                                            (mutil/translate 0 (- dist) 0)))
+                              ("w" :kp_8) (vswap! camera* update-in [:rotate :x] - (/ Math/PI 10))
+                              ("s" :kp_2) (vswap! camera* update-in [:rotate :x] + (/ Math/PI 10))
+                              ("a" ) (vswap! camera* update-in [:rotate :y] - 0.005)
+                              ("d" ) (vswap! camera* update-in [:rotate :y] + 0.005)
+                               
+                               :left (vswap! camera* update-in [:translate :x] - dist)
+                               :right (vswap! camera* update-in [:translate :x] + dist)
+                               :up (vswap! camera* update-in [:translate :y] + dist)
+                               :down (vswap! camera* update-in [:translate :y] - dist)
 
-                              :left (vswap! sphere-mat* #(mat/mmul 
-                                                      %
-                                                      (mutil/translate (- dist) 0 0)
-                                                      ))
-                              :right (vswap! sphere-mat* #(mat/mmul
-                                                       %
-                                                       (mutil/translate dist 0 0)
-                                                       ))
-                              :up (vswap! sphere-mat* #(mat/mmul 
-                                                    %
-                                                        (mutil/translate 0 0 dist)))
-                              :down (vswap! sphere-mat* #(mat/mmul 
-                                                      %
-                                                      (mutil/translate 0 0 (- dist)  )))
                               nil)))
                         pm)))))]
     (skia/run-sync view-fn
