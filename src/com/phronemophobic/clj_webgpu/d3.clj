@@ -136,9 +136,13 @@
      :resolveTarget 0
      :storeOp :Store
      :clearValue 
-     {:r 1
+     #_{:r 1
       :g 1
       :b 1
+      :a 1}
+     {:r 0.05
+      :g 0.05
+      :b 0.05
       :a 1}
      #_{:r 0.9
         :g 0.1
